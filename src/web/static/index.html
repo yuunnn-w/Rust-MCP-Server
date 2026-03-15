@@ -1,0 +1,248 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Rust MCP Server - Control Panel</title>
+    <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+    <div id="app">
+        <!-- Header -->
+        <header class="header">
+            <div class="header-left">
+                <button id="menu-btn" class="menu-btn" title="Settings">
+                    <span></span>
+                    <span></span>
+                    <span></span>
+                </button>
+                <h1 data-i18n="app.title">Rust MCP Server</h1>
+                <button id="lang-switch" class="lang-btn">中/EN</button>
+            </div>
+            <div class="header-right">
+                <div class="concurrency-info">
+                    <span data-i18n="app.concurrency">Concurrency</span>: <span id="current-calls">0</span>/<span id="max-concurrency">10</span>
+                </div>
+                <label class="switch global-switch">
+                    <input type="checkbox" id="mcp-toggle" checked>
+                    <span class="slider round"></span>
+                </label>
+                <span id="mcp-status" data-i18n="app.running">Running</span>
+            </div>
+        </header>
+
+        <!-- Settings Sidebar -->
+        <aside id="sidebar" class="sidebar">
+            <div class="sidebar-header">
+                <h2 data-i18n="sidebar.title">Settings</h2>
+                <button id="close-sidebar" class="close-btn">&times;</button>
+            </div>
+            <div class="sidebar-content">
+                <div class="config-section">
+                    <h3 data-i18n="sidebar.currentConfig">Current Configuration</h3>
+                    <div class="config-item">
+                        <label data-i18n="config.webuiAddr">WebUI Address:</label>
+                        <span id="config-webui-addr">127.0.0.1:2233</span>
+                    </div>
+                    <div class="config-item">
+                        <label data-i18n="config.mcpTransport">MCP Transport:</label>
+                        <span id="config-transport">http</span>
+                    </div>
+                    <div class="config-item">
+                        <label data-i18n="config.mcpAddr">MCP Address:</label>
+                        <span id="config-mcp-addr">127.0.0.1:3344</span>
+                    </div>
+                    <div class="config-item">
+                        <label data-i18n="config.workingDir">Working Directory:</label>
+                        <span id="config-working-dir">.</span>
+                    </div>
+                    <div class="config-item">
+                        <label data-i18n="config.maxConcurrency">Max Concurrency:</label>
+                        <span id="config-max-concurrency">10</span>
+                    </div>
+                    <div class="config-item">
+                        <label data-i18n="config.logLevel">Log Level:</label>
+                        <span id="config-log-level">info</span>
+                    </div>
+                </div>
+                <div class="config-actions">
+                    <button id="edit-config-btn" class="btn btn-primary" data-i18n="sidebar.modifyConfig">Modify Config</button>
+                    <button id="restart-mcp-btn" class="btn btn-warning" data-i18n="sidebar.restartMcp">Restart MCP Service</button>
+                </div>
+            </div>
+        </aside>
+
+        <!-- Config Modal -->
+        <div id="config-modal" class="modal">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h3 data-i18n="config.modalTitle">Modify Configuration</h3>
+                    <button class="close-btn" onclick="closeModal('config-modal')">&times;</button>
+                </div>
+                <div class="modal-body">
+                    <div class="form-group">
+                        <label for="new-mcp-transport" data-i18n="config.mcpTransport">MCP Transport:</label>
+                        <select id="new-mcp-transport">
+                            <option value="http" selected>HTTP (JSON)</option>
+                            <option value="sse">SSE (Stream)</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label for="new-mcp-host" data-i18n="config.mcpHost">MCP Host:</label>
+                        <input type="text" id="new-mcp-host" placeholder="127.0.0.1">
+                    </div>
+                    <div class="form-group">
+                        <label for="new-mcp-port" data-i18n="config.mcpPort">MCP Port:</label>
+                        <input type="number" id="new-mcp-port" min="1" max="65535" placeholder="3344">
+                    </div>
+                    <div class="form-group">
+                        <label for="new-webui-host" data-i18n="config.webuiHost">WebUI Host:</label>
+                        <input type="text" id="new-webui-host" placeholder="127.0.0.1">
+                    </div>
+                    <div class="form-group">
+                        <label for="new-webui-port" data-i18n="config.webuiPort">WebUI Port:</label>
+                        <input type="number" id="new-webui-port" min="1" max="65535" placeholder="2233">
+                    </div>
+                    <div class="form-group">
+                        <label for="new-max-concurrency" data-i18n="config.maxConcurrency">Max Concurrency:</label>
+                        <input type="number" id="new-max-concurrency" min="1" max="1000" value="10">
+                    </div>
+                    <div class="form-group">
+                        <label for="new-log-level" data-i18n="config.logLevel">Log Level:</label>
+                        <select id="new-log-level">
+                            <option value="trace">trace</option>
+                            <option value="debug">debug</option>
+                            <option value="info" selected>info</option>
+                            <option value="warn">warn</option>
+                            <option value="error">error</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label for="new-working-dir" data-i18n="config.workingDir">Working Directory:</label>
+                        <input type="text" id="new-working-dir" placeholder=".">
+                    </div>
+                    <div class="form-note" data-i18n="config.restartNote">
+                        Note: Some configuration changes require server restart to take effect.
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button class="btn btn-secondary" onclick="closeModal('config-modal')" data-i18n="common.cancel">Cancel</button>
+                    <button class="btn btn-primary" id="save-config-btn" data-i18n="common.save">Save</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Tool Detail Modal -->
+        <div id="tool-modal" class="modal">
+            <div class="modal-content modal-large">
+                <div class="modal-header">
+                    <h3 id="tool-modal-title" data-i18n="tools.detailsTitle">Tool Details</h3>
+                    <button class="close-btn" onclick="closeModal('tool-modal')">&times;</button>
+                </div>
+                <div class="modal-body">
+                    <div class="tool-info-section">
+                        <h4 data-i18n="tools.description">Description</h4>
+                        <p id="tool-description" class="tool-description-text"></p>
+                    </div>
+                    <div class="tool-info-section">
+                        <h4 data-i18n="tools.usage">Usage</h4>
+                        <pre id="tool-usage" class="tool-usage-text"></pre>
+                    </div>
+                    <div class="tool-stats">
+                        <div class="stat-card">
+                            <h4 data-i18n="tools.totalCalls">Total Calls</h4>
+                            <span id="tool-total-calls" class="stat-value">0</span>
+                        </div>
+                        <div class="stat-card">
+                            <h4 data-i18n="tools.last15Min">Last 15 Min</h4>
+                            <span id="tool-recent-calls" class="stat-value">0</span>
+                        </div>
+                    </div>
+                    <div class="chart-container">
+                        <h4 data-i18n="tools.callFrequencyChart">Call Frequency (Last 2 Hours)</h4>
+                        <canvas id="tool-chart"></canvas>
+                    </div>
+                    <div class="recent-calls">
+                        <h4 data-i18n="tools.recentCalls">Recent Calls</h4>
+                        <ul id="recent-calls-list"></ul>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Main Content -->
+        <main class="main-content">
+            <!-- Toolbar -->
+            <div class="toolbar">
+                <div class="alphabet-nav">
+                    <button data-letter="all" class="active" data-i18n="tools.all">All</button>
+                    <button data-letter="a">A</button>
+                    <button data-letter="b">B</button>
+                    <button data-letter="c">C</button>
+                    <button data-letter="d">D</button>
+                    <button data-letter="e">E</button>
+                    <button data-letter="f">F</button>
+                    <button data-letter="g">G</button>
+                    <button data-letter="h">H</button>
+                    <button data-letter="i">I</button>
+                    <button data-letter="j">J</button>
+                    <button data-letter="k">K</button>
+                    <button data-letter="l">L</button>
+                    <button data-letter="m">M</button>
+                    <button data-letter="n">N</button>
+                    <button data-letter="o">O</button>
+                    <button data-letter="p">P</button>
+                    <button data-letter="q">Q</button>
+                    <button data-letter="r">R</button>
+                    <button data-letter="s">S</button>
+                    <button data-letter="t">T</button>
+                    <button data-letter="u">U</button>
+                    <button data-letter="v">V</button>
+                    <button data-letter="w">W</button>
+                    <button data-letter="x">X</button>
+                    <button data-letter="y">Y</button>
+                    <button data-letter="z">Z</button>
+                </div>
+                <div class="toolbar-actions">
+                    <input type="text" id="search-input" placeholder="Search tools..." data-i18n-attr="placeholder:tools.searchPlaceholder">
+                    <select id="sort-select">
+                        <option value="name-asc" data-i18n="sort.nameAsc">Name A-Z</option>
+                        <option value="name-desc" data-i18n="sort.nameDesc">Name Z-A</option>
+                        <option value="calls-desc" data-i18n="sort.mostUsed">Most Used</option>
+                        <option value="calls-asc" data-i18n="sort.leastUsed">Least Used</option>
+                    </select>
+                </div>
+            </div>
+
+            <!-- Safe Tools Section -->
+            <div id="safe-tools-section" class="tools-section safe-section">
+                <div class="section-header safe-header">
+                    <span class="section-icon">✓</span>
+                    <span data-i18n="tools.safeTools">Safe Tools</span>
+                </div>
+                <div id="tools-grid-safe" class="tools-grid">
+                    <!-- Safe tools will be dynamically inserted here -->
+                </div>
+            </div>
+
+            <!-- Dangerous Tools Section -->
+            <div id="dangerous-tools-section" class="tools-section dangerous-section">
+                <div class="section-header dangerous-header">
+                    <span class="section-icon">⚠</span>
+                    <span data-i18n="tools.dangerousTools">Dangerous Tools</span>
+                </div>
+                <div id="tools-grid-dangerous" class="tools-grid">
+                    <!-- Dangerous tools will be dynamically inserted here -->
+                </div>
+            </div>
+        </main>
+
+        <!-- Footer -->
+        <footer class="footer">
+            <p>Rust MCP Server v0.1.0 | <a href="https://github.com/modelcontextprotocol" target="_blank" data-i18n="footer.documentation">Documentation</a></p>
+        </footer>
+    </div>
+
+    <script src="/script.js"></script>
+</body>
+</html>
