@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2021"
 authors = ["MCP Server Team"]
 description = "A high-performance MCP server with WebUI control panel"
-license = "MIT"
+license = "GPL-3.0"
 repository = "https://github.com/yuunnn-w/Rust-MCP-Server"
 
 [dependencies]

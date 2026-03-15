@@ -146,7 +146,9 @@ pub enum StatusUpdate {
 /// Pending command for user confirmation
 #[derive(Debug, Clone)]
 pub struct PendingCommand {
+    #[allow(dead_code)]
     pub command: String,
+    #[allow(dead_code)]
     pub cwd: String,
     pub timestamp: Instant,
 }

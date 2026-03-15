@@ -161,6 +161,7 @@ pub fn is_text_file(path: &Path) -> bool {
 }
 
 /// Safe path join that prevents directory traversal
+#[allow(dead_code)]
 pub fn safe_join(base: &Path, subpath: &str) -> Option<PathBuf> {
     let joined = base.join(subpath);
     let normalized = normalize_path(&joined)?;
@@ -173,6 +174,7 @@ pub fn safe_join(base: &Path, subpath: &str) -> Option<PathBuf> {
 }
 
 /// Normalize a path (resolve . and ..)
+#[allow(dead_code)]
 fn normalize_path(path: &Path) -> Option<PathBuf> {
     let mut result = PathBuf::new();
     

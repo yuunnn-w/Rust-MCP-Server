@@ -3,7 +3,7 @@
 <p align="center">
   <img src="https://img.shields.io/badge/Rust-1.75%2B-orange?logo=rust" alt="Rust Version">
   <img src="https://img.shields.io/badge/MCP-Protocol-blue" alt="MCP Protocol">
-  <img src="https://img.shields.io/badge/License-MIT-green" alt="License">
+  <img src="https://img.shields.io/badge/License-GPL%20v3.0-blue" alt="License">
   <img src="https://img.shields.io/badge/Platform-Windows%20%7C%20Linux%20%7C%20macOS-lightgrey" alt="Platform">
 </p>
 
@@ -37,7 +37,7 @@ Rust MCP Server is a high-performance [Model Context Protocol (MCP)](https://mod
 - **18 Built-in Tools**: File operations, HTTP requests, calculations, system info, and more
 - **WebUI Control Panel**: Modern web interface for managing tools and monitoring
 - **Real-time Updates**: SSE-based live status updates in WebUI
-- **Multi-Transport Support**: SSE and HTTP (default) transports
+- **Multi-Transport Support**: HTTP (default, JSON response) and SSE (stream response) transports
 - **Concurrency Control**: Configurable max concurrent tool calls
 - **Internationalization**: Support for English and Chinese
 
@@ -245,7 +245,7 @@ Rust-MCP-Server/
 ├── docs/                    # Documentation
 ├── README.md               # This file
 ├── README-zh.md            # Chinese README
-└── LICENSE                 # MIT License
+└── LICENSE                 # GPL v3.0 License
 ```
 
 ### Testing with llama.cpp
@@ -283,7 +283,7 @@ Contributions are welcome! Please read our [Contributing Guidelines](CONTRIBUTIN
 
 ## License
 
-This project is licensed under the GLP V3.0 License - see the [LICENSE](LICENSE) file for details.
+This project is licensed under the GPL v3.0 License - see the [LICENSE](LICENSE) file for details.
 
 ## Acknowledgments
 

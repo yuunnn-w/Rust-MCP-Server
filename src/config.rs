@@ -103,6 +103,7 @@ impl AppConfig {
     }
 
     /// Get list of initially disabled tools
+    #[allow(dead_code)]
     pub fn get_disabled_tools(&self) -> Vec<String> {
         self.disable_tools
             .iter()

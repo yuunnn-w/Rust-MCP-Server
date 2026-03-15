@@ -177,7 +177,7 @@ fn parse_mul_div(tokens: &[Token], pos: usize) -> Result<(f64, usize), String> {
 }
 
 fn parse_power(tokens: &[Token], pos: usize) -> Result<(f64, usize), String> {
-    let (left, mut pos) = parse_unary(tokens, pos)?;
+    let (left, pos) = parse_unary(tokens, pos)?;
 
     if pos < tokens.len() && tokens[pos] == Token::Power {
         let (right, new_pos) = parse_power(tokens, pos + 1)?;

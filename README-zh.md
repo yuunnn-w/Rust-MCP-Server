@@ -3,7 +3,7 @@
 <p align="center">
   <img src="https://img.shields.io/badge/Rust-1.75%2B-orange?logo=rust" alt="Rust 版本">
   <img src="https://img.shields.io/badge/MCP-Protocol-blue" alt="MCP 协议">
-  <img src="https://img.shields.io/badge/License-MIT-green" alt="许可证">
+  <img src="https://img.shields.io/badge/License-GPL%20v3.0-blue" alt="许可证">
   <img src="https://img.shields.io/badge/Platform-Windows%20%7C%20Linux%20%7C%20macOS-lightgrey" alt="平台">
 </p>
 
@@ -37,7 +37,7 @@ Rust MCP Server 是一个使用 Rust 构建的高性能 [模型上下文协议 (
 - **18 个内置工具**: 文件操作、HTTP 请求、计算、系统信息等
 - **WebUI 控制面板**: 现代化的 Web 界面，用于管理工具和监控
 - **实时更新**: 基于 SSE 的实时状态更新
-- **多传输支持**: SSE 和 HTTP（默认）传输
+- **多传输支持**: HTTP（默认，JSON 响应）和 SSE（流式响应）传输
 - **并发控制**: 可配置的最大并发工具调用数
 - **国际化支持**: 支持英文和中文
 
@@ -245,7 +245,7 @@ Rust-MCP-Server/
 ├── docs/                    # 文档
 ├── README.md               # 英文 README
 ├── README-zh.md            # 中文 README
-└── LICENSE                 # MIT 许可证
+└── LICENSE                 # GPL v3.0 许可证
 ```
 
 ### 使用 llama.cpp 测试
@@ -283,7 +283,7 @@ cargo doc --no-deps --open
 
 ## 许可证
 
-本项目采用 GLP V3.0 许可证 - 详情请见 [LICENSE](LICENSE) 文件。
+本项目采用 GPL v3.0 许可证 - 详情请见 [LICENSE](LICENSE) 文件。
 
 ## 致谢
 

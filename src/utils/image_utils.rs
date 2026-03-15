@@ -32,6 +32,7 @@ pub fn is_image_file(path: &Path) -> bool {
 }
 
 /// Read image file and encode to base64
+#[allow(dead_code)]
 pub fn read_image_base64(path: &Path) -> Result<(String, String), String> {
     use base64::Engine;
 
@@ -43,6 +44,7 @@ pub fn read_image_base64(path: &Path) -> Result<(String, String), String> {
 }
 
 /// Get image dimensions if available (for common formats)
+#[allow(dead_code)]
 pub fn get_image_dimensions(path: &Path) -> Option<(u32, u32)> {
     // This is a simplified version - in production you might want to use an image crate
     // For now, we'll return None as we don't want to add heavy dependencies
