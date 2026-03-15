@@ -173,15 +173,16 @@ pub async fn enable_tool(
 
 /// Get current configuration
 pub async fn get_config(State(state): State<Arc<ServerState>>) -> Json<ConfigResponse> {
+    let config = state.config.read().await;
     Json(ConfigResponse {
-        webui_host: state.config.webui_host.clone(),
-        webui_port: state.config.webui_port,
-        mcp_transport: state.config.mcp_transport.clone(),
-        mcp_host: state.config.mcp_host.clone(),
-        mcp_port: state.config.mcp_port,
-        max_concurrency: state.config.max_concurrency,
-        working_dir: state.config.working_dir.to_string_lossy().to_string(),
-        log_level: state.config.log_level.clone(),
+        webui_host: config.webui_host.clone(),
+        webui_port: config.webui_port,
+        mcp_transport: config.mcp_transport.clone(),
+        mcp_host: config.mcp_host.clone(),
+        mcp_port: config.mcp_port,
+        max_concurrency: config.max_concurrency,
+        working_dir: config.working_dir.to_string_lossy().to_string(),
+        log_level: config.log_level.clone(),
     })
 }
 
@@ -192,19 +193,24 @@ pub async fn update_config(
 ) -> Result<Json<serde_json::Value>, String> {
     let mut changes = Vec::new();
     let mut restart_required = false;
+    let mut config = state.config.write().await;
 
     // Validate and update max_concurrency
     if let Some(max_concurrency) = request.max_concurrency {
         if max_concurrency == 0 || max_concurrency > 1000 {
             return Err("max_concurrency must be between 1 and 1000".to_string());
         }
+        config.max_concurrency = max_concurrency;
+        drop(config); // Release write lock before calling set_max_concurrency
         state.set_max_concurrency(max_concurrency).await;
+        config = state.config.write().await; // Re-acquire lock
         changes.push(format!("max_concurrency: {}", max_concurrency));
     }
 
     // Transport change requires restart
     if let Some(mcp_transport) = request.mcp_transport {
         if matches!(mcp_transport.as_str(), "http" | "sse") {
+            config.mcp_transport = mcp_transport.clone();
             changes.push(format!("mcp_transport: {}", mcp_transport));
             restart_required = true;
         } else {
@@ -215,8 +221,7 @@ pub async fn update_config(
     // These changes require restart
     if let Some(mcp_host) = request.mcp_host {
         if !mcp_host.is_empty() {
-            // Note: In a real implementation, you'd persist this to config file
-            // For now, we just track the change
+            config.mcp_host = mcp_host.clone();
             changes.push(format!("mcp_host: {}", mcp_host));
             restart_required = true;
         }
@@ -224,6 +229,7 @@ pub async fn update_config(
 
     if let Some(mcp_port) = request.mcp_port {
         if mcp_port > 0 {
+            config.mcp_port = mcp_port;
             changes.push(format!("mcp_port: {}", mcp_port));
             restart_required = true;
         }
@@ -231,6 +237,7 @@ pub async fn update_config(
 
     if let Some(webui_host) = request.webui_host {
         if !webui_host.is_empty() {
+            config.webui_host = webui_host.clone();
             changes.push(format!("webui_host: {}", webui_host));
             restart_required = true;
         }
@@ -238,6 +245,7 @@ pub async fn update_config(
 
     if let Some(webui_port) = request.webui_port {
         if webui_port > 0 {
+            config.webui_port = webui_port;
             changes.push(format!("webui_port: {}", webui_port));
             restart_required = true;
         }
@@ -245,6 +253,7 @@ pub async fn update_config(
 
     if let Some(log_level) = request.log_level {
         if matches!(log_level.as_str(), "trace" | "debug" | "info" | "warn" | "error") {
+            config.log_level = log_level.clone();
             changes.push(format!("log_level: {}", log_level));
             restart_required = true;
         } else {
@@ -254,10 +263,13 @@ pub async fn update_config(
 
     if let Some(working_dir) = request.working_dir {
         if !working_dir.is_empty() {
+            config.working_dir = std::path::PathBuf::from(&working_dir);
             changes.push(format!("working_dir: {}", working_dir));
             restart_required = true;
         }
     }
+
+    drop(config); // Release lock before returning
 
     let message = if restart_required {
         "Configuration updated. Restart server to apply all changes."
@@ -275,7 +287,9 @@ pub async fn update_config(
 
 /// Start MCP service
 pub async fn start_mcp(State(state): State<Arc<ServerState>>) -> Json<serde_json::Value> {
+    tracing::info!("Received request to start MCP service");
     state.set_mcp_running(true).await;
+    tracing::info!("MCP service status set to running");
     Json(serde_json::json!({
         "success": true,
         "message": "MCP service started"
@@ -284,7 +298,9 @@ pub async fn start_mcp(State(state): State<Arc<ServerState>>) -> Json<serde_json
 
 /// Stop MCP service
 pub async fn stop_mcp(State(state): State<Arc<ServerState>>) -> Json<serde_json::Value> {
+    tracing::info!("Received request to stop MCP service");
     state.set_mcp_running(false).await;
+    tracing::info!("MCP service status set to stopped");
     Json(serde_json::json!({
         "success": true,
         "message": "MCP service stopped"
@@ -293,9 +309,12 @@ pub async fn stop_mcp(State(state): State<Arc<ServerState>>) -> Json<serde_json:
 
 /// Restart MCP service
 pub async fn restart_mcp(State(state): State<Arc<ServerState>>) -> Json<serde_json::Value> {
+    tracing::info!("Received request to restart MCP service");
     state.set_mcp_running(false).await;
+    tracing::info!("MCP service stopping for restart...");
     tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
     state.set_mcp_running(true).await;
+    tracing::info!("MCP service restarted successfully");
     
     Json(serde_json::json!({
         "success": true,
@@ -386,7 +405,7 @@ pub async fn get_tool_detail(
 /// Generate usage information for a tool
 fn generate_tool_usage(tool_name: &str) -> String {
     match tool_name {
-        "dir_list" => "Usage: Provide a 'path' parameter to list directory contents.\nExample: {\"path\": \"/home/user\"}".to_string(),
+        "dir_list" => "Usage: List directory contents (max depth 1).\nParameters: 'path', optional 'max_depth' (default: 1, max: 1), optional 'include_hidden'\nExample: {\"path\": \"/home/user\"}".to_string(),
         "file_read" => "Usage: Read text file content with line range.\nParameters: 'path', optional 'start_line' (default: 0), optional 'end_line' (default: 100)\nNote: Content is limited to 10KB. If exceeded, last line will be truncated.\nReturns: File content, total line count, and hints for remaining content.\nExample: {\"path\": \"/home/user/file.txt\", \"start_line\": 0, \"end_line\": 100}".to_string(),
         "file_search" => "Usage: Search for keyword in file or directory.\nParameters: 'path' (file or directory), 'keyword'\nNote: Only searches text files (UTF-8). Binary files are skipped.\nFor directories: searches recursively up to depth 3.\nReturns: Matching file paths with line numbers, search statistics, and skipped directories if any.\nExample: {\"path\": \"/home/user/src\", \"keyword\": \"TODO\"}".to_string(),
         "file_write" => "Usage: Write content to a file.\nParameters: 'path', 'content', 'mode' (new/append/overwrite)\nExample: {\"path\": \"test.txt\", \"content\": \"Hello\", \"mode\": \"new\"}".to_string(),

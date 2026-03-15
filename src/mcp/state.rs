@@ -159,8 +159,8 @@ pub struct ServerState {
     pub tool_status: DashMap<String, ToolStatus>,
     /// Concurrency limiter
     pub concurrency_limiter: Semaphore,
-    /// Configuration
-    pub config: AppConfig,
+    /// Configuration (wrapped in RwLock to allow updates)
+    pub config: RwLock<AppConfig>,
     /// Status update broadcaster
     pub status_tx: broadcast::Sender<StatusUpdate>,
     /// Current concurrent calls
@@ -182,7 +182,7 @@ impl ServerState {
         let state = Arc::new(Self {
             tool_status: DashMap::new(),
             concurrency_limiter: Semaphore::new(max_concurrency),
-            config,
+            config: RwLock::new(config),
             status_tx,
             current_calls: RwLock::new(0),
             max_concurrency: RwLock::new(max_concurrency),
@@ -194,14 +194,17 @@ impl ServerState {
     }
 
     /// Initialize tool status (only for tools that don't exist yet)
-    pub fn init_tools(&self, tools: Vec<(String, String, bool)>) {
+    pub async fn init_tools(&self, tools: Vec<(String, String, bool)>) {
         let mut initialized_count = 0;
         let mut skipped_count = 0;
+        
+        // Read config once for all tools
+        let config = self.config.read().await;
         
         for (name, description, is_dangerous) in tools {
             // Only insert if tool doesn't already exist
             if !self.tool_status.contains_key(&name) {
-                let enabled = !self.config.is_tool_disabled(&name);
+                let enabled = !config.is_tool_disabled(&name);
                 let status = ToolStatus::new(&name, description, enabled, is_dangerous);
                 self.tool_status.insert(name, status);
                 initialized_count += 1;
@@ -209,6 +212,8 @@ impl ServerState {
                 skipped_count += 1;
             }
         }
+        
+        drop(config);
         
         if initialized_count > 0 {
             info!("Initialized {} tools ({} already existed)", initialized_count, skipped_count);

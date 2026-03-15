@@ -98,7 +98,11 @@ pub async fn execute_command(
     }
 
     // Security check 2: check for dangerous commands
-    if let Some(dangerous_id) = state.config.check_dangerous_command(command) {
+    let config = state.config.read().await;
+    let dangerous_check = config.check_dangerous_command(command);
+    drop(config);
+    
+    if let Some(dangerous_id) = dangerous_check {
         // Check if this command is already pending (second attempt)
         if state.is_command_pending(command, cwd).await {
             // User confirmed - remove from pending and proceed with warning

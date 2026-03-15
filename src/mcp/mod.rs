@@ -57,7 +57,6 @@ pub async fn start_http_server(
     let service = StreamableHttpService::new(
         move || {
             let handler = Handler::new(state_for_closure.clone(), &config_for_closure);
-            handler.init_tools();
             Ok(handler)
         },
         LocalSessionManager::default().into(),
@@ -115,7 +114,6 @@ pub async fn start_sse_server(
     let service = StreamableHttpService::new(
         move || {
             let handler = Handler::new(state_for_closure.clone(), &config_for_closure);
-            handler.init_tools();
             Ok(handler)
         },
         LocalSessionManager::default().into(),

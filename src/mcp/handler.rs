@@ -16,23 +16,19 @@ use tracing::{debug, info};
 pub struct McpHandler {
     state: Arc<ServerState>,
     tool_router: ToolRouter<Self>,
-    working_dir: std::path::PathBuf,
 }
 
 impl McpHandler {
-    pub fn new(state: Arc<ServerState>, config: &AppConfig) -> Self {
-        let working_dir = config.working_dir.clone();
+    pub fn new(state: Arc<ServerState>, _config: &AppConfig) -> Self {
         Self {
             state,
             tool_router: Self::tool_router(),
-            working_dir,
         }
     }
 
-    /// Initialize tool status in the state
-    pub fn init_tools(&self) {
-        let tools = crate::mcp::tools::get_all_tools();
-        self.state.init_tools(tools);
+    /// Get current working directory from state config
+    async fn get_working_dir(&self) -> std::path::PathBuf {
+        self.state.config.read().await.working_dir.clone()
     }
 }
 
@@ -40,7 +36,7 @@ impl McpHandler {
 impl McpHandler {
     // ===== Basic Tools (Always Enabled) =====
 
-    #[tool(description = "List directory contents with tree structure (max depth 3)")]
+    #[tool(description = "List directory contents with tree structure (max depth 1)")]
     async fn dir_list(
         &self,
         params: Parameters<dir_list::DirListParams>,
@@ -75,7 +71,8 @@ impl McpHandler {
         &self,
         params: Parameters<file_write::FileWriteParams>,
     ) -> Result<CallToolResult, McpError> {
-        file_write::file_write(params, &self.working_dir).await.map_err(|e| {
+        let working_dir = self.get_working_dir().await;
+        file_write::file_write(params, &working_dir).await.map_err(|e| {
             McpError::invalid_params(e, None)
         })
     }
@@ -85,7 +82,8 @@ impl McpHandler {
         &self,
         params: Parameters<file_ops::FileCopyParams>,
     ) -> Result<CallToolResult, McpError> {
-        file_ops::file_copy(params, &self.working_dir).await.map_err(|e| {
+        let working_dir = self.get_working_dir().await;
+        file_ops::file_copy(params, &working_dir).await.map_err(|e| {
             McpError::invalid_params(e, None)
         })
     }
@@ -95,7 +93,8 @@ impl McpHandler {
         &self,
         params: Parameters<file_ops::FileMoveParams>,
     ) -> Result<CallToolResult, McpError> {
-        file_ops::file_move(params, &self.working_dir).await.map_err(|e| {
+        let working_dir = self.get_working_dir().await;
+        file_ops::file_move(params, &working_dir).await.map_err(|e| {
             McpError::invalid_params(e, None)
         })
     }
@@ -105,7 +104,8 @@ impl McpHandler {
         &self,
         params: Parameters<file_ops::FileDeleteParams>,
     ) -> Result<CallToolResult, McpError> {
-        file_ops::file_delete(params, &self.working_dir).await.map_err(|e| {
+        let working_dir = self.get_working_dir().await;
+        file_ops::file_delete(params, &working_dir).await.map_err(|e| {
             McpError::invalid_params(e, None)
         })
     }
@@ -115,7 +115,8 @@ impl McpHandler {
         &self,
         params: Parameters<file_ops::FileRenameParams>,
     ) -> Result<CallToolResult, McpError> {
-        file_ops::file_rename(params, &self.working_dir).await.map_err(|e| {
+        let working_dir = self.get_working_dir().await;
+        file_ops::file_rename(params, &working_dir).await.map_err(|e| {
             McpError::invalid_params(e, None)
         })
     }
@@ -165,7 +166,8 @@ impl McpHandler {
         params: Parameters<execute_command::ExecuteCommandParams>,
         context: RequestContext<RoleServer>,
     ) -> Result<CallToolResult, McpError> {
-        execute_command::execute_command(params, &self.working_dir, self.state.clone(), context).await.map_err(|e| {
+        let working_dir = self.get_working_dir().await;
+        execute_command::execute_command(params, &working_dir, self.state.clone(), context).await.map_err(|e| {
             McpError::invalid_params(e, None)
         })
     }

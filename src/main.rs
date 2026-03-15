@@ -52,7 +52,7 @@ async fn main() -> anyhow::Result<()> {
             // Initialize tools
             let tools = mcp::tools::get_all_tools();
             let tool_count = tools.len();
-            state.init_tools(tools);
+            state.init_tools(tools).await;
             
             info!("Starting MCP server with {} tools", tool_count);
             

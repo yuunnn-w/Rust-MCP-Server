@@ -10,8 +10,8 @@ pub struct DirListParams {
     /// Directory path to list
     #[schemars(description = "The directory path to list")]
     pub path: String,
-    /// Maximum depth to traverse (default: 3, max: 5)
-    #[schemars(description = "Maximum depth to traverse (default: 3)")]
+    /// Maximum depth to traverse (default: 1, max: 1)
+    #[schemars(description = "Maximum depth to traverse (default: 1)")]
     pub max_depth: Option<usize>,
     /// Include hidden files (default: false)
     #[schemars(description = "Include hidden files (default: false)")]
@@ -30,7 +30,7 @@ struct FileEntry {
 
 pub async fn dir_list(params: Parameters<DirListParams>) -> Result<CallToolResult, String> {
     let params = params.0;
-    let max_depth = params.max_depth.unwrap_or(3).min(5);
+    let max_depth = params.max_depth.unwrap_or(1).min(1);
     let include_hidden = params.include_hidden.unwrap_or(false);
     let path = Path::new(&params.path);
 

@@ -15,7 +15,7 @@ const appState = {
 const toolDescriptions = {
     en: {
         'calculator': 'Calculate mathematical expressions (supports +, -, *, /, ^, sqrt, sin, cos, tan, log, ln, abs, pi, e)',
-        'dir_list': 'List directory contents with tree structure (max depth 3)',
+        'dir_list': 'List directory contents with tree structure (max depth 1)',
         'file_read': 'Read text file content with line range support (10KB limit)',
         'file_search': 'Search for keyword in file or directory (max depth 3)',
         'file_write': 'Write content to file (create/append/overwrite)',
@@ -35,7 +35,7 @@ const toolDescriptions = {
     },
     zh: {
         'calculator': '计算数学表达式（支持 +, -, *, /, ^, sqrt, sin, cos, tan, log, ln, abs, pi, e）',
-        'dir_list': '列出目录内容，树形结构显示（最大深度3层）',
+        'dir_list': '列出目录内容，树形结构显示（最大深度1层）',
         'file_read': '读取文本文件内容（支持行数范围，10KB限制）',
         'file_search': '在文件或目录中搜索关键词（最大深度3层）',
         'file_write': '写入文件内容（新建/追加/覆盖）',

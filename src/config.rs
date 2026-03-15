@@ -1,7 +1,8 @@
 use clap::Parser;
+use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
-#[derive(Parser, Debug, Clone)]
+#[derive(Parser, Debug, Clone, Serialize, Deserialize)]
 #[command(
     name = "rust-mcp-server",
     author = "MCP Server Team",
@@ -50,6 +51,7 @@ pub struct AppConfig {
         default_value = "file_write,file_copy,file_move,file_delete,file_rename,http_request,datetime,image_read,execute_command,process_list,base64_encode,base64_decode,hash_compute,system_info",
         env = "MCP_DISABLE_TOOLS"
     )]
+    #[serde(default = "default_disable_tools")]
     pub disable_tools: Vec<String>,
 
     /// Working directory for file operations (dangerous ops restricted here)
@@ -78,7 +80,28 @@ pub struct AppConfig {
                 Linux: 1=rm(delete), 2=del(delete), 3=format, 4=mkfs, 5=dd, 6=fork(:(){:|:&};:), 7=eval, 8=exec, 9=system, 10=shred\n\
                 Windows: 11=rd/s, 12=format, 13=diskpart, 14=reg(registry/注册表), 15=net(network/网络), 16=sc(service/服务), 17=schtasks(scheduled tasks/计划任务), 18=powercfg, 19=bcdedit, 20=wevtutil"
     )]
+    #[serde(default)]
     pub allow_dangerous_commands: Vec<u8>,
+}
+
+/// Default value for disable_tools
+fn default_disable_tools() -> Vec<String> {
+    vec![
+        "file_write".to_string(),
+        "file_copy".to_string(),
+        "file_move".to_string(),
+        "file_delete".to_string(),
+        "file_rename".to_string(),
+        "http_request".to_string(),
+        "datetime".to_string(),
+        "image_read".to_string(),
+        "execute_command".to_string(),
+        "process_list".to_string(),
+        "base64_encode".to_string(),
+        "base64_decode".to_string(),
+        "hash_compute".to_string(),
+        "system_info".to_string(),
+    ]
 }
 
 impl AppConfig {

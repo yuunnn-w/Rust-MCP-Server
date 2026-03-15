@@ -98,13 +98,13 @@ List directory contents with tree structure.
 
 **Parameters:**
 - `path` (string): Directory path (default: current directory)
-- `max_depth` (number, optional): Maximum recursion depth (default: 3, max: 5)
+- `max_depth` (number, optional): Maximum recursion depth (default: 1, max: 1)
 
 **Example:**
 ```json
 {
   "path": "/project/src",
-  "max_depth": 2
+  "max_depth": 1
 }
 ```
 
