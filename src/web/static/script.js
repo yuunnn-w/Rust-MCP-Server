@@ -273,66 +273,67 @@ class CommandCenter {
         };
 
         const draw = () => {
-            const accent = getAccentColor();
-            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            if (!this.bgAnimationPaused) {
+                const accent = getAccentColor();
+                ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-            // Perspective grid
-            gridOffset = (gridOffset + 0.3) % 40;
-            ctx.strokeStyle = `rgba(${accent}, 0.04)`;
-            ctx.lineWidth = 1;
+                // Perspective grid
+                gridOffset = (gridOffset + 0.3) % 40;
+                ctx.strokeStyle = `rgba(${accent}, 0.04)`;
+                ctx.lineWidth = 1;
 
-            // Horizontal lines with perspective
-            for (let i = 0; i < canvas.height / 2; i += 40) {
-                const y = i + gridOffset;
-                if (y > canvas.height / 2) continue;
-                const perspective = 1 - (y / (canvas.height / 2)) * 0.7;
-                ctx.globalAlpha = perspective * 0.5;
-                ctx.beginPath();
-                ctx.moveTo(0, y + canvas.height / 2);
-                ctx.lineTo(canvas.width, y + canvas.height / 2);
-                ctx.stroke();
-            }
-            ctx.globalAlpha = 1;
+                // Horizontal lines with perspective
+                for (let i = 0; i < canvas.height / 2; i += 40) {
+                    const y = i + gridOffset;
+                    if (y > canvas.height / 2) continue;
+                    const perspective = 1 - (y / (canvas.height / 2)) * 0.7;
+                    ctx.globalAlpha = perspective * 0.5;
+                    ctx.beginPath();
+                    ctx.moveTo(0, y + canvas.height / 2);
+                    ctx.lineTo(canvas.width, y + canvas.height / 2);
+                    ctx.stroke();
+                }
+                ctx.globalAlpha = 1;
 
-            // Vertical lines
-            for (let i = 0; i < canvas.width; i += 60) {
-                ctx.beginPath();
-                ctx.moveTo(i, canvas.height / 2);
-                ctx.lineTo(i + (i - canvas.width / 2) * 0.3, canvas.height);
-                ctx.stroke();
-            }
+                // Vertical lines
+                for (let i = 0; i < canvas.width; i += 60) {
+                    ctx.beginPath();
+                    ctx.moveTo(i, canvas.height / 2);
+                    ctx.lineTo(i + (i - canvas.width / 2) * 0.3, canvas.height);
+                    ctx.stroke();
+                }
 
-            // Particles
-            particles.forEach(p => {
-                p.x += p.vx;
-                p.y += p.vy;
-                if (p.x < 0) p.x = canvas.width;
-                if (p.x > canvas.width) p.x = 0;
-                if (p.y < 0) p.y = canvas.height;
-                if (p.y > canvas.height) p.y = 0;
+                // Particles
+                particles.forEach(p => {
+                    p.x += p.vx;
+                    p.y += p.vy;
+                    if (p.x < 0) p.x = canvas.width;
+                    if (p.x > canvas.width) p.x = 0;
+                    if (p.y < 0) p.y = canvas.height;
+                    if (p.y > canvas.height) p.y = 0;
 
-                ctx.beginPath();
-                ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
-                ctx.fillStyle = `rgba(${accent}, ${p.alpha})`;
-                ctx.fill();
-            });
+                    ctx.beginPath();
+                    ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
+                    ctx.fillStyle = `rgba(${accent}, ${p.alpha})`;
+                    ctx.fill();
+                });
 
-            // Connect nearby particles
-            for (let i = 0; i < particles.length; i++) {
-                for (let j = i + 1; j < particles.length; j++) {
-                    const dx = particles[i].x - particles[j].x;
-                    const dy = particles[i].y - particles[j].y;
-                    const dist = Math.sqrt(dx * dx + dy * dy);
-                    if (dist < 120) {
-                        ctx.beginPath();
-                        ctx.moveTo(particles[i].x, particles[i].y);
-                        ctx.lineTo(particles[j].x, particles[j].y);
-                        ctx.strokeStyle = `rgba(${accent}, ${0.05 * (1 - dist / 120)})`;
-                        ctx.stroke();
+                // Connect nearby particles
+                for (let i = 0; i < particles.length; i++) {
+                    for (let j = i + 1; j < particles.length; j++) {
+                        const dx = particles[i].x - particles[j].x;
+                        const dy = particles[i].y - particles[j].y;
+                        const dist = Math.sqrt(dx * dx + dy * dy);
+                        if (dist < 120) {
+                            ctx.beginPath();
+                            ctx.moveTo(particles[i].x, particles[i].y);
+                            ctx.lineTo(particles[j].x, particles[j].y);
+                            ctx.strokeStyle = `rgba(${accent}, ${0.05 * (1 - dist / 120)})`;
+                            ctx.stroke();
+                        }
                     }
                 }
             }
-
             requestAnimationFrame(draw);
         };
         draw();
@@ -408,41 +409,39 @@ class CommandCenter {
     }
 
     handleSSE(data) {
-        if (data.type === 'toolCallCount') {
+        if (data.type === 'ToolCallCount') {
             const tool = this.tools.find(t => t.name === data.tool);
             if (tool) {
                 tool.call_count = data.count;
-                tool.is_calling = data.is_calling;
-                tool.is_busy = data.is_busy;
+                tool.is_calling = data.isCalling;
+                tool.is_busy = data.isBusy;
                 if (!this.callHistory[tool.name]) this.callHistory[tool.name] = [];
                 this.callHistory[tool.name].push({
                     time: new Date().toLocaleTimeString(),
                     count: data.count,
-                    is_calling: data.is_calling
+                    is_calling: data.isCalling
                 });
                 if (this.callHistory[tool.name].length > 50) {
                     this.callHistory[tool.name].shift();
                 }
-                this.addTerminalLog(data.is_calling ? 'info' : 'success',
-                    `${data.tool}: call_count=${data.count}, is_calling=${data.is_calling}`);
+                this.addTerminalLog(data.isCalling ? 'info' : 'success',
+                    `${data.tool}: call_count=${data.count}, is_calling=${data.isCalling}`);
                 this.render();
             }
-        } else if (data.type === 'toolEnabled') {
+        } else if (data.type === 'ToolEnabled') {
             const tool = this.tools.find(t => t.name === data.tool);
             if (tool) {
                 tool.enabled = data.enabled;
                 this.addTerminalLog('info', `${data.tool}: enabled=${data.enabled}`);
                 this.render();
             }
-        } else if (data.type === 'mcpServiceStatus') {
+        } else if (data.type === 'McpServiceStatus') {
             this.updateMCPStatus(data.running);
             this.addTerminalLog('info', `MCP service running=${data.running}`);
-        } else if (data.type === 'concurrentCalls') {
+        } else if (data.type === 'ConcurrentCalls') {
             const el = document.querySelector('.hud-number[data-metric="concurrency"]');
             if (el) el.textContent = `${data.current}/${data.max}`;
             this.addTerminalLog('info', `Concurrent calls: ${data.current}/${data.max}`);
-        } else if (data.type === 'SystemMetrics') {
-            // Already handled by polling
         }
     }
 
@@ -621,10 +620,12 @@ class CommandCenter {
 
     closeModal(id) {
         document.getElementById(id)?.classList.remove('show');
+        this.bgAnimationPaused = false;
     }
 
     openModal(id) {
         document.getElementById(id)?.classList.add('show');
+        this.bgAnimationPaused = true;
     }
 
     // ============================================================
@@ -696,8 +697,10 @@ class CommandCenter {
         document.getElementById('modal-error-rate').textContent =
             (stats?.error_rate !== undefined) ? `${stats.error_rate.toFixed(1)}%` : 'N/A';
 
-        // Chart
-        this.drawToolChart(name, stats?.stats_history || []);
+        // Chart — defer draw until layout is complete
+        requestAnimationFrame(() => {
+            this.drawToolChart(name, stats?.stats_history || []);
+        });
 
         // Recent calls
         const callsList = document.getElementById('recent-calls-list');
@@ -727,7 +730,7 @@ class CommandCenter {
         const canvas = document.getElementById('tool-chart');
         if (!canvas) return;
         const ctx = canvas.getContext('2d');
-        const data = history.slice(-24); // show last 24 intervals max
+        const data = history.slice(-24);
         if (data.length < 2) { ctx.clearRect(0, 0, canvas.width, canvas.height); return; }
 
         canvas.width = canvas.offsetWidth;
@@ -736,25 +739,110 @@ class CommandCenter {
 
         const max = Math.max(...data, 1);
         const w = canvas.width, h = canvas.height;
-        const pad = 20;
+        const padLeft = 42, padRight = 15, padTop = 15, padBottom = 28;
+        const chartW = w - padLeft - padRight;
+        const chartH = h - padTop - padBottom;
 
-        ctx.strokeStyle = 'rgba(0, 240, 255, 0.3)';
+        // Theme-aware colors
+        const rootStyle = getComputedStyle(document.documentElement);
+        const accent = rootStyle.getPropertyValue('--neon-cyan').trim() || '#2dd4bf';
+        const muted = rootStyle.getPropertyValue('--text-muted').trim() || '#64748b';
+        const gridColor = rootStyle.getPropertyValue('--border-color').trim() || 'rgba(45, 212, 191, 0.25)';
+
+        // Parse accent hex to rgba for gradients
+        let r = 45, g = 212, b = 191;
+        const hexMatch = accent.match(/^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i);
+        if (hexMatch) {
+            r = parseInt(hexMatch[1], 16);
+            g = parseInt(hexMatch[2], 16);
+            b = parseInt(hexMatch[3], 16);
+        }
+
+        // Compute points
+        const points = data.map((count, i) => ({
+            x: padLeft + (i / (data.length - 1)) * chartW,
+            y: padTop + chartH - (count / max) * chartH
+        }));
+
+        // Grid lines (horizontal, dashed)
+        ctx.strokeStyle = gridColor;
         ctx.lineWidth = 1;
-        ctx.beginPath();
-        data.forEach((count, i) => {
-            const x = pad + (i / (data.length - 1)) * (w - pad * 2);
-            const y = h - pad - (count / max) * (h - pad * 2);
-            if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
-        });
-        ctx.stroke();
+        ctx.setLineDash([4, 4]);
+        const ySteps = 4;
+        for (let i = 0; i <= ySteps; i++) {
+            const y = padTop + (i / ySteps) * chartH;
+            ctx.beginPath();
+            ctx.moveTo(padLeft, y);
+            ctx.lineTo(padLeft + chartW, y);
+            ctx.stroke();
+        }
+        ctx.setLineDash([]);
 
-        // Fill
-        ctx.lineTo(pad + (w - pad * 2), h - pad);
-        ctx.lineTo(pad, h - pad);
+        // Y-axis labels (call count)
+        ctx.fillStyle = muted;
+        ctx.font = '10px var(--font-mono)';
+        ctx.textAlign = 'right';
+        ctx.textBaseline = 'middle';
+        for (let i = 0; i <= ySteps; i++) {
+            const val = Math.round(max * (1 - i / ySteps));
+            const y = padTop + (i / ySteps) * chartH;
+            ctx.fillText(val.toString(), padLeft - 8, y);
+        }
+
+        // X-axis labels (time intervals)
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'top';
+        const xLabels = ['now', '30m', '60m', '90m', '120m'];
+        const xIndices = [0, Math.floor(data.length / 4), Math.floor(data.length / 2), Math.floor(data.length * 3 / 4), data.length - 1];
+        xIndices.forEach((idx, i) => {
+            if (idx >= 0 && idx < data.length) {
+                const x = padLeft + (idx / (data.length - 1)) * chartW;
+                ctx.fillText(xLabels[i] || '', x, padTop + chartH + 8);
+            }
+        });
+
+        // Smooth curve (Catmull-Rom spline → cubic Bezier with clamped control points)
+        ctx.beginPath();
+        ctx.strokeStyle = accent;
+        ctx.lineWidth = 2.5;
+        ctx.shadowColor = accent;
+        ctx.shadowBlur = 14;
+        ctx.lineCap = 'round';
+        ctx.lineJoin = 'round';
+
+        const chartMinY = padTop;
+        const chartMaxY = padTop + chartH;
+
+        ctx.moveTo(points[0].x, points[0].y);
+        for (let i = 0; i < points.length - 1; i++) {
+            const p0 = points[Math.max(0, i - 1)];
+            const p1 = points[i];
+            const p2 = points[i + 1];
+            const p3 = points[Math.min(points.length - 1, i + 2)];
+
+            // Lower tension (0.15 vs original 1/6≈0.167) to reduce overshoot
+            const tension = 0.15;
+            let cp1x = p1.x + (p2.x - p0.x) * tension;
+            let cp1y = p1.y + (p2.y - p0.y) * tension;
+            let cp2x = p2.x - (p3.x - p1.x) * tension;
+            let cp2y = p2.y - (p3.y - p1.y) * tension;
+
+            // Clamp control-point Y to chart bounds so the curve never dips below/above
+            cp1y = Math.max(chartMinY, Math.min(chartMaxY, cp1y));
+            cp2y = Math.max(chartMinY, Math.min(chartMaxY, cp2y));
+
+            ctx.bezierCurveTo(cp1x, cp1y, cp2x, cp2y, p2.x, p2.y);
+        }
+        ctx.stroke();
+        ctx.shadowBlur = 0;
+
+        // Fill area under curve
+        ctx.lineTo(points[points.length - 1].x, padTop + chartH);
+        ctx.lineTo(points[0].x, padTop + chartH);
         ctx.closePath();
-        const grad = ctx.createLinearGradient(0, 0, 0, h);
-        grad.addColorStop(0, 'rgba(0, 240, 255, 0.15)');
-        grad.addColorStop(1, 'rgba(0, 240, 255, 0)');
+        const grad = ctx.createLinearGradient(0, padTop, 0, padTop + chartH);
+        grad.addColorStop(0, `rgba(${r}, ${g}, ${b}, 0.22)`);
+        grad.addColorStop(1, `rgba(${r}, ${g}, ${b}, 0.0)`);
         ctx.fillStyle = grad;
         ctx.fill();
     }

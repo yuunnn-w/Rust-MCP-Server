@@ -2,7 +2,7 @@
 name = "rust-mcp-server"
 version = "0.2.0"
 edition = "2021"
-authors = ["MCP Server Team"]
+authors = ["小阳uni - yuunnn_w"]
 description = "A high-performance MCP server with WebUI control panel"
 license = "GPL-3.0"
 repository = "https://github.com/yuunnn-w/Rust-MCP-Server"
