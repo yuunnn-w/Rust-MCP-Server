@@ -45,6 +45,8 @@ pub struct ToolStatsResponse {
     pub recent_calls_15min: usize,
     pub stats_history: Vec<usize>,
     pub recent_call_times: Vec<String>,
+    pub avg_duration_ms: f64,
+    pub error_rate: f64,
 }
 
 /// Configuration response
@@ -144,12 +146,28 @@ pub async fn get_tool_stats(
     let stats_history = status.get_stats(120, 5).await; // 120 minutes, 5 minute intervals
     let recent_call_times = status.get_recent_call_times(10).await;
 
+    let avg_duration_ms = {
+        let durations = status.call_durations.read().await;
+        if durations.is_empty() {
+            0.0
+        } else {
+            durations.iter().sum::<u64>() as f64 / durations.len() as f64
+        }
+    };
+    let error_rate = if status.call_count == 0 {
+        0.0
+    } else {
+        status.error_count as f64 / status.call_count as f64 * 100.0
+    };
+
     Ok(Json(ToolStatsResponse {
         name: status.name,
         total_calls: status.call_count,
         recent_calls_15min,
         stats_history,
         recent_call_times,
+        avg_duration_ms,
+        error_rate,
     }))
 }
 

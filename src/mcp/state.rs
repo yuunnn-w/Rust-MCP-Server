@@ -27,6 +27,14 @@ pub struct ToolStatus {
     /// Recent call timestamps (for statistics)
     #[serde(skip)]
     pub recent_calls: Arc<RwLock<VecDeque<Instant>>>,
+    /// Start time of current call (for duration tracking)
+    #[serde(skip)]
+    pub call_start_time: Arc<RwLock<Option<Instant>>>,
+    /// Recent call durations in milliseconds (for avg duration)
+    #[serde(skip)]
+    pub call_durations: Arc<RwLock<VecDeque<u64>>>,
+    /// Number of failed calls
+    pub error_count: u64,
     /// Tool name
     pub name: String,
     /// Tool description
@@ -43,6 +51,9 @@ impl ToolStatus {
             is_calling: false,
             last_call_end: Arc::new(RwLock::new(None)),
             recent_calls: Arc::new(RwLock::new(VecDeque::with_capacity(1000))),
+            call_start_time: Arc::new(RwLock::new(None)),
+            call_durations: Arc::new(RwLock::new(VecDeque::with_capacity(100))),
+            error_count: 0,
             name: name.into(),
             description: description.into(),
             is_dangerous,
@@ -61,6 +72,10 @@ impl ToolStatus {
         while calls.len() > 1000 {
             calls.pop_front();
         }
+        
+        // Record start time for duration tracking
+        let mut start = self.call_start_time.write().await;
+        *start = Some(Instant::now());
     }
 
     /// Record a call end
@@ -68,6 +83,17 @@ impl ToolStatus {
         self.is_calling = false;
         let mut last_end = self.last_call_end.write().await;
         *last_end = Some(Instant::now());
+        
+        // Calculate and store call duration
+        let duration_ms = {
+            let start_opt = self.call_start_time.read().await;
+            start_opt.map(|s| s.elapsed().as_millis() as u64).unwrap_or(0)
+        };
+        let mut durations = self.call_durations.write().await;
+        durations.push_back(duration_ms);
+        while durations.len() > 100 {
+            durations.pop_front();
+        }
     }
 
     /// Get call count in the last N minutes

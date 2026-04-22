@@ -691,18 +691,18 @@ class CommandCenter {
         document.getElementById('modal-call-count').textContent = tool.call_count || 0;
         const recentCalls = stats?.recent_call_times || [];
         document.getElementById('modal-last-call').textContent = recentCalls[0] || 'N/A';
-        document.getElementById('modal-avg-duration').textContent = 'N/A';
-        document.getElementById('modal-error-rate').textContent = 'N/A';
+        document.getElementById('modal-avg-duration').textContent =
+            (stats?.avg_duration_ms && stats.avg_duration_ms > 0) ? `${stats.avg_duration_ms.toFixed(0)} ms` : 'N/A';
+        document.getElementById('modal-error-rate').textContent =
+            (stats?.error_rate !== undefined) ? `${stats.error_rate.toFixed(1)}%` : 'N/A';
 
         // Chart
-        this.drawToolChart(name);
+        this.drawToolChart(name, stats?.stats_history || []);
 
         // Recent calls
         const callsList = document.getElementById('recent-calls-list');
-        const history = this.callHistory[name] || [];
-        const recent = history.slice(-10).reverse();
-        callsList.innerHTML = recent.length
-            ? recent.map(c => `<li>${c.time} — calls: ${c.count}, calling: ${c.is_calling}</li>`).join('')
+        callsList.innerHTML = recentCalls.length
+            ? recentCalls.map(t => `<li>${t}</li>`).join('')
             : '<li>No recent calls</li>';
 
         this.openModal('tool-modal');
@@ -723,28 +723,27 @@ class CommandCenter {
         this.closeModal('tool-modal');
     }
 
-    drawToolChart(name) {
+    drawToolChart(name, history) {
         const canvas = document.getElementById('tool-chart');
         if (!canvas) return;
         const ctx = canvas.getContext('2d');
-        const history = this.callHistory[name] || [];
-        const data = history.slice(-20);
+        const data = history.slice(-24); // show last 24 intervals max
         if (data.length < 2) { ctx.clearRect(0, 0, canvas.width, canvas.height); return; }
 
         canvas.width = canvas.offsetWidth;
         canvas.height = canvas.offsetHeight;
         ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-        const max = Math.max(...data.map(d => d.count), 1);
+        const max = Math.max(...data, 1);
         const w = canvas.width, h = canvas.height;
         const pad = 20;
 
         ctx.strokeStyle = 'rgba(0, 240, 255, 0.3)';
         ctx.lineWidth = 1;
         ctx.beginPath();
-        data.forEach((d, i) => {
+        data.forEach((count, i) => {
             const x = pad + (i / (data.length - 1)) * (w - pad * 2);
-            const y = h - pad - (d.count / max) * (h - pad * 2);
+            const y = h - pad - (count / max) * (h - pad * 2);
             if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
         });
         ctx.stroke();

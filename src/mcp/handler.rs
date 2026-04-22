@@ -468,6 +468,17 @@ impl ServerHandler for McpHandler {
         
         let result = self.tool_router.call(tcc).await;
         
+        let has_error = match &result {
+            Ok(r) => r.is_error.unwrap_or(false),
+            Err(_) => true,
+        };
+        
+        if has_error {
+            if let Some(mut s) = self.state.tool_status.get_mut(tool_name.as_ref()) {
+                s.error_count += 1;
+            }
+        }
+        
         self.state.record_call_end(&tool_name).await;
         
         result
