@@ -34,9 +34,10 @@ Rust MCP Server is a high-performance [Model Context Protocol (MCP)](https://mod
 ## Features
 
 ### Core Features
-- **18 Built-in Tools**: File operations, HTTP requests, calculations, system info, and more
-- **WebUI Control Panel**: Modern web interface for managing tools and monitoring
+- **20 Built-in Tools**: File operations, HTTP requests, calculations, system info, base64 codec, git operations, JSON queries, and more
+- **WebUI Control Panel**: Cyberpunk AI Command Center theme with glassmorphism HUD, animated background, terminal log stream, and 3D card tilt effects
 - **Real-time Updates**: SSE-based live status updates in WebUI
+- **System Metrics**: Real-time CPU, memory, and load monitoring via HUD and `/api/system-metrics` endpoint
 - **Multi-Transport Support**: HTTP (default, JSON response) and SSE (stream response) transports
 - **Concurrency Control**: Configurable max concurrent tool calls
 - **Internationalization**: Support for English and Chinese
@@ -53,35 +54,37 @@ Rust MCP Server is a high-performance [Model Context Protocol (MCP)](https://mod
 #### File Operations (Safe)
 | Tool | Description | Dangerous |
 |------|-------------|-----------|
-| `dir_list` | List directory contents with tree structure | No |
-| `file_read` | Read text file content with line range support | No |
-| `file_search` | Search for keywords in files/directories | No |
-| `image_read` | Read image file and return base64 data | No |
+| `dir_list` | List directory contents with tree or flat structure | No |
+| `file_read` | Read text file content with line range and highlight support | No |
+| `file_search` | Search for keywords with detailed/compact/location output | No |
+| `file_edit` | Multi-mode editing: string_replace, line_replace, insert, delete, patch | Yes |
+| `file_stat` | Get file/directory metadata (size, permissions, timestamps) | No |
+| `path_exists` | Lightweight path existence check | No |
+| `json_query` | Query JSON files using JSON Pointer | No |
+| `image_read` | Read image file and return MCP-standard ImageContent (for vision encoders) plus metadata | No |
 
 #### File Operations (Dangerous - Disabled by Default)
 | Tool | Description | Security Check |
 |------|-------------|----------------|
 | `file_write` | Write content to file | Working directory check |
-| `file_copy` | Copy file to new location | Working directory check |
-| `file_move` | Move file to new location | Working directory check |
-| `file_delete` | Delete file | Working directory check |
-| `file_rename` | Rename file | Working directory check |
+| `file_ops` | Copy, move, delete, or rename files | Working directory check |
 
 #### System & Network Tools
 | Tool | Description | Default Status |
 |------|-------------|----------------|
-| `execute_command` | Execute shell commands with safety checks | Disabled |
+| `execute_command` | Execute shell commands with safety checks and shell selection | Disabled |
 | `process_list` | List system processes | Disabled |
 | `system_info` | Get system information | Disabled |
 | `http_request` | Make HTTP GET/POST requests | Disabled |
+| `git_ops` | Run git commands (status, diff, log, branch, show) | Enabled |
+| `env_get` | Get environment variable values | Enabled |
 
 #### Utility Tools
 | Tool | Description |
 |------|-------------|
 | `calculator` | Calculate mathematical expressions |
 | `datetime` | Get current date/time (China timezone) |
-| `base64_encode` | Encode string to base64 |
-| `base64_decode` | Decode base64 to string |
+| `base64_codec` | Encode/decode base64 |
 | `hash_compute` | Compute MD5/SHA1/SHA256 hashes |
 
 ## Quick Start
@@ -107,6 +110,15 @@ cd Rust-MCP-Server
 
 # Or build manually with cargo
 cargo build --release
+```
+
+#### Windows 7 Compatibility
+
+If you need to run on Windows 7, use the following cross-compilation command:
+
+```bash
+rustup update nightly
+cargo +nightly build -Z build-std=std,panic_abort --target x86_64-win7-windows-msvc --release
 ```
 
 ### Usage
@@ -152,10 +164,12 @@ http://127.0.0.1:2233
 | `--allow-dangerous-commands` | `MCP_ALLOW_DANGEROUS_COMMANDS` | - | Allow dangerous command IDs |
 | `--log-level` | `MCP_LOG_LEVEL` | `info` | Log level: trace/debug/info/warn/error |
 | `--disable-webui` | - | - | Disable WebUI panel |
+| `--allowed-hosts` | `MCP_ALLOWED_HOSTS` | - | Custom allowed Host headers (comma-separated) |
+| `--disable-allowed-hosts` | `MCP_DISABLE_ALLOWED_HOSTS` | - | Disable DNS rebinding protection (not recommended for public) |
 
 **Default Tool Status:**
-- **Enabled by default (4):** `calculator`, `dir_list`, `file_read`, `file_search`
-- **Disabled by default (14):** `file_write`, `file_copy`, `file_move`, `file_delete`, `file_rename`, `http_request`, `datetime`, `image_read`, `execute_command`, `process_list`, `base64_encode`, `base64_decode`, `hash_compute`, `system_info`
+- **Enabled by default (10):** `calculator`, `dir_list`, `file_read`, `file_search`, `image_read`, `file_stat`, `path_exists`, `json_query`, `git_ops`, `env_get`
+- **Disabled by default (10):** `file_write`, `file_ops`, `file_edit`, `http_request`, `datetime`, `execute_command`, `process_list`, `base64_codec`, `hash_compute`, `system_info`
 
 ### Dangerous Command IDs
 
@@ -239,7 +253,7 @@ Rust-MCP-Server/
 │   │   ├── handler.rs       # MCP protocol handler
 │   │   ├── state.rs         # Shared server state
 │   │   └── tools/           # Tool implementations
-│   ├── utils/               # Utility functions
+│   ├── utils/               # Utility functions (file, image, system metrics)
 │   └── web/                 # WebUI and HTTP API
 ├── scripts/                 # Build scripts
 ├── docs/                    # Documentation

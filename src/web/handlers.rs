@@ -161,8 +161,7 @@ pub async fn enable_tool(
 ) -> Result<Json<serde_json::Value>, String> {
     state
         .set_tool_enabled(&name, request.enabled)
-        .await
-        .map_err(|e| e)?;
+        .await?;
 
     Ok(Json(serde_json::json!({
         "success": true,
@@ -285,29 +284,29 @@ pub async fn update_config(
     })))
 }
 
-/// Start MCP service
+/// Start MCP service (updates status flag only)
 pub async fn start_mcp(State(state): State<Arc<ServerState>>) -> Json<serde_json::Value> {
     tracing::info!("Received request to start MCP service");
     state.set_mcp_running(true).await;
     tracing::info!("MCP service status set to running");
     Json(serde_json::json!({
         "success": true,
-        "message": "MCP service started"
+        "message": "MCP service status set to running. Note: full restart requires process manager."
     }))
 }
 
-/// Stop MCP service
+/// Stop MCP service (updates status flag only)
 pub async fn stop_mcp(State(state): State<Arc<ServerState>>) -> Json<serde_json::Value> {
     tracing::info!("Received request to stop MCP service");
     state.set_mcp_running(false).await;
     tracing::info!("MCP service status set to stopped");
     Json(serde_json::json!({
         "success": true,
-        "message": "MCP service stopped"
+        "message": "MCP service status set to stopped. Note: full shutdown requires process manager."
     }))
 }
 
-/// Restart MCP service
+/// Restart MCP service (toggles status flag only, not a full process restart)
 pub async fn restart_mcp(State(state): State<Arc<ServerState>>) -> Json<serde_json::Value> {
     tracing::info!("Received request to restart MCP service");
     state.set_mcp_running(false).await;
@@ -318,7 +317,7 @@ pub async fn restart_mcp(State(state): State<Arc<ServerState>>) -> Json<serde_js
     
     Json(serde_json::json!({
         "success": true,
-        "message": "MCP service restarted"
+        "message": "MCP service status restarted. Note: for a full restart, please use your process manager."
     }))
 }
 
@@ -405,24 +404,77 @@ pub async fn get_tool_detail(
 /// Generate usage information for a tool
 fn generate_tool_usage(tool_name: &str) -> String {
     match tool_name {
-        "dir_list" => "Usage: List directory contents (max depth 1).\nParameters: 'path', optional 'max_depth' (default: 1, max: 1), optional 'include_hidden'\nExample: {\"path\": \"/home/user\"}".to_string(),
-        "file_read" => "Usage: Read text file content with line range.\nParameters: 'path', optional 'start_line' (default: 0), optional 'end_line' (default: 100)\nNote: Content is limited to 10KB. If exceeded, last line will be truncated.\nReturns: File content, total line count, and hints for remaining content.\nExample: {\"path\": \"/home/user/file.txt\", \"start_line\": 0, \"end_line\": 100}".to_string(),
-        "file_search" => "Usage: Search for keyword in file or directory.\nParameters: 'path' (file or directory), 'keyword'\nNote: Only searches text files (UTF-8). Binary files are skipped.\nFor directories: searches recursively up to depth 3.\nReturns: Matching file paths with line numbers, search statistics, and skipped directories if any.\nExample: {\"path\": \"/home/user/src\", \"keyword\": \"TODO\"}".to_string(),
+        "dir_list" => "Usage: List directory contents with filtering and brief mode (max depth 5).\nParameters: 'path', optional 'max_depth' (default: 2, max: 5), optional 'include_hidden', optional 'pattern' (glob e.g. '*.rs'), optional 'brief' (default: true), optional 'sort_by' (name/type/size/modified), optional 'flatten' (default: false)\nExample: {\"path\": \"/home/user\", \"pattern\": \"*.rs\", \"brief\": true}".to_string(),
+        "file_read" => "Usage: Read text file content with line numbers and large range support.\nParameters: 'path', optional 'start_line' (default: 0), optional 'end_line' (default: 500), optional 'offset_chars', optional 'max_chars' (default: 15000), optional 'line_numbers' (default: true), optional 'highlight_line' (1-based)\nExample: {\"path\": \"/home/user/file.txt\", \"start_line\": 0, \"end_line\": 500}".to_string(),
+        "file_search" => "Usage: Search for keyword and return matching content fragments with context (max depth 5).\nParameters: 'path', 'keyword', optional 'file_pattern' (glob), optional 'use_regex' (default: false), optional 'max_results' (default: 20), optional 'context_lines' (default: 3), optional 'brief' (default: false), optional 'output_format' (detailed/compact/location, default: detailed)\nExample: {\"path\": \"/home/user/src\", \"keyword\": \"TODO\", \"context_lines\": 3}".to_string(),
+        "file_edit" => "Usage: Edit a file using string_replace, line_replace, insert, delete, or patch mode.\nstring_replace: path, old_string, new_string, optional occurrence (1=first default, 0=all)\nline_replace: path, start_line, end_line, new_string\ninsert: path, start_line, new_string\ndelete: path, start_line, end_line\npatch: path, patch (unified diff string)\nExamples: {\"path\": \"main.rs\", \"mode\": \"string_replace\", \"old_string\": \"fn old()\", \"new_string\": \"fn new()\"} | {\"path\": \"main.rs\", \"mode\": \"line_replace\", \"start_line\": 10, \"end_line\": 15, \"new_string\": \"new code\"}".to_string(),
         "file_write" => "Usage: Write content to a file.\nParameters: 'path', 'content', 'mode' (new/append/overwrite)\nExample: {\"path\": \"test.txt\", \"content\": \"Hello\", \"mode\": \"new\"}".to_string(),
-        "file_copy" => "Usage: Copy a file.\nParameters: 'source', 'destination'\nExample: {\"source\": \"file1.txt\", \"destination\": \"file2.txt\"}".to_string(),
-        "file_move" => "Usage: Move a file.\nParameters: 'source', 'destination'\nExample: {\"source\": \"old.txt\", \"destination\": \"new.txt\"}".to_string(),
-        "file_delete" => "Usage: Delete a file.\nParameter: 'path'\nExample: {\"path\": \"file.txt\"}".to_string(),
-        "file_rename" => "Usage: Rename a file.\nParameters: 'path', 'new_name'\nExample: {\"path\": \"old.txt\", \"new_name\": \"new.txt\"}".to_string(),
+        "file_ops" => "Usage: Copy, move, delete, or rename files.\nParameters: 'action' (copy/move/delete/rename), 'source' (file path), 'target' (target path or new name), optional 'overwrite' (default: false)\nExamples: {\"action\": \"copy\", \"source\": \"a.txt\", \"target\": \"b.txt\"} | {\"action\": \"delete\", \"source\": \"file.txt\"} | {\"action\": \"rename\", \"source\": \"old.txt\", \"target\": \"new.txt\"}".to_string(),
+        "file_stat" => "Usage: Get file or directory metadata.\nParameters: 'path'\nReturns: name, size, file_type, permissions, modified/created/accessed timestamps\nExample: {\"path\": \"src/main.rs\"}".to_string(),
+        "path_exists" => "Usage: Check if a path exists and get its type.\nParameters: 'path'\nReturns: exists (bool), path_type (file/dir/symlink/none)\nExample: {\"path\": \"src/main.rs\"}".to_string(),
+        "json_query" => "Usage: Query a JSON file using JSON Pointer syntax.\nParameters: 'path', 'query' (JSON Pointer like '/data/0/name'), optional 'max_chars' (default: 15000)\nExample: {\"path\": \"config.json\", \"query\": \"/database/host\"}".to_string(),
+        "git_ops" => "Usage: Run git commands in a repository.\nParameters: 'action' (status/diff/log/branch/show), optional 'repo_path' (default: working_dir), optional 'options' (array of extra args)\nExample: {\"action\": \"status\"} | {\"action\": \"log\", \"options\": [\"--oneline\", \"-n\", \"10\"]}".to_string(),
         "calculator" => "Usage: Calculate mathematical expressions.\nParameter: 'expression'\nSupports: +, -, *, /, ^, sqrt, sin, cos, tan, log, ln, abs, pi, e\nExample: {\"expression\": \"2 + 3 * 4\"}".to_string(),
-        "http_request" => "Usage: Make HTTP requests.\nParameters: 'url', 'method' (GET/POST), optional 'headers', 'body'\nExample: {\"url\": \"https://api.example.com\", \"method\": \"GET\"}".to_string(),
+        "http_request" => "Usage: Make HTTP requests with optional JSON extraction and response limiting.\nParameters: 'url', 'method' (GET/POST), optional 'headers', 'body', optional 'extract_json_path' (e.g. '/data/0/name'), optional 'include_response_headers' (default: false), optional 'max_response_chars' (default: 15000)\nExample: {\"url\": \"https://api.example.com\", \"method\": \"GET\"}".to_string(),
         "datetime" => "Usage: Get current date and time.\nNo parameters required.\nExample: {}".to_string(),
-        "image_read" => "Usage: Read an image file and return base64 encoded data.\nParameter: 'path'\nExample: {\"path\": \"image.png\"}".to_string(),
-        "execute_command" => "Usage: Execute a shell command (disabled by default).\nParameters: 'command', 'working_dir', optional 'timeout'\nExample: {\"command\": \"ls -la\", \"working_dir\": \"/home/user\"}".to_string(),
+        "image_read" => "Usage: Read an image file and return base64 data or metadata only.\nParameters: 'path', optional 'mode' (full/metadata, default: full)\nExample: {\"path\": \"image.png\", \"mode\": \"metadata\"}".to_string(),
+        "execute_command" => "Usage: Execute a shell command (disabled by default).\nParameters: 'command', optional 'cwd', optional 'timeout', optional 'shell' (cmd/powershell/pwsh on Windows; sh/bash/zsh on Unix)\nExample: {\"command\": \"ls -la\", \"cwd\": \"/home/user\"}".to_string(),
         "process_list" => "Usage: List system processes.\nNo parameters required.\nExample: {}".to_string(),
-        "base64_encode" => "Usage: Encode string to base64.\nParameter: 'input'\nExample: {\"input\": \"Hello, World!\"}".to_string(),
-        "base64_decode" => "Usage: Decode base64 string.\nParameter: 'input'\nExample: {\"input\": \"SGVsbG8sIFdvcmxkIQ==\"}".to_string(),
+        "base64_codec" => "Usage: Encode or decode base64 strings.\nParameters: 'operation' (encode/decode), 'input'\nExample: {\"operation\": \"encode\", \"input\": \"Hello, World!\"}".to_string(),
         "hash_compute" => "Usage: Compute hash of string or file.\nParameters: 'input', 'algorithm' (MD5/SHA1/SHA256)\nFor files, prefix path with 'file:'\nExample: {\"input\": \"hello\", \"algorithm\": \"SHA256\"}".to_string(),
         "system_info" => "Usage: Get system information.\nNo parameters required.\nExample: {}".to_string(),
+        "env_get" => "Usage: Get the value of an environment variable.\nParameters: 'name'\nExample: {\"name\": \"PATH\"}".to_string(),
         _ => "No usage information available.".to_string(),
     }
+}
+
+/// System metrics response
+#[derive(Debug, Serialize)]
+pub struct SystemMetricsResponse {
+    pub cpu_percent: f32,
+    pub memory_total: u64,
+    pub memory_used: u64,
+    pub memory_percent: f32,
+    pub cpu_cores: usize,
+    pub uptime_seconds: u64,
+    pub load_average: [f64; 3],
+    pub process_count: usize,
+}
+
+/// Get current system metrics
+pub async fn get_system_metrics(State(state): State<Arc<ServerState>>) -> Json<SystemMetricsResponse> {
+    let metrics = state.collect_metrics();
+    Json(SystemMetricsResponse {
+        cpu_percent: metrics.cpu_percent,
+        memory_total: metrics.memory_total,
+        memory_used: metrics.memory_used,
+        memory_percent: metrics.memory_percent,
+        cpu_cores: metrics.cpu_cores,
+        uptime_seconds: metrics.uptime_seconds,
+        load_average: metrics.load_average,
+        process_count: metrics.process_count,
+    })
+}
+
+/// Version information response
+#[derive(Debug, Serialize)]
+pub struct VersionResponse {
+    pub name: String,
+    pub version: String,
+    pub description: String,
+    pub authors: String,
+    pub repository: String,
+    pub license: String,
+}
+
+/// Get server version information
+pub async fn get_version() -> Json<VersionResponse> {
+    Json(VersionResponse {
+        name: env!("CARGO_PKG_NAME").to_string(),
+        version: env!("CARGO_PKG_VERSION").to_string(),
+        description: env!("CARGO_PKG_DESCRIPTION").to_string(),
+        authors: env!("CARGO_PKG_AUTHORS").to_string(),
+        repository: env!("CARGO_PKG_REPOSITORY").to_string(),
+        license: env!("CARGO_PKG_LICENSE").to_string(),
+    })
 }

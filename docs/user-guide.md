@@ -58,15 +58,16 @@ Example configuration for Claude Desktop:
 
 ### Dashboard Overview
 
-The WebUI provides a comprehensive control panel:
-- **Tool Grid**: View and manage all 18 tools
-- **Status Bar**: Monitor concurrent calls and server status
-- **Statistics Panel**: View tool usage charts (Chart.js)
-- **Real-time Updates**: SSE-based live status updates
+The WebUI provides a Cyberpunk AI Command Center:
+- **HUD Header**: Live system metrics (CPU ring gauge, memory bar, total calls, concurrency)
+- **Tool Grid**: View and manage all tools with 3D tilt hover effects and neon accent borders
+- **Terminal Log Panel**: Bottom panel streaming SSE events with colored log levels (INFO/WARN/ERROR)
+- **Real-time Updates**: SSE-based live status updates for tool calls, concurrency, and MCP service status
+- **Animated Background**: Canvas-based perspective grid and floating particle network
 
 ### Enabling/Disabling Tools
 
-**Important:** By default, only `calculator`, `dir_list`, `file_read`, and `file_search` are enabled for security.
+**Important:** By default, 10 tools are enabled for security: `calculator`, `dir_list`, `file_read`, `file_search`, `image_read`, `file_stat`, `path_exists`, `json_query`, `git_ops`, and `env_get`.
 
 1. Open WebUI at `http://127.0.0.1:2233`
 2. Find the tool card in the grid
@@ -75,10 +76,10 @@ The WebUI provides a comprehensive control panel:
 
 ### Viewing Tool Statistics
 
-Click on "Details" button on any tool card to see:
+Click on any tool card to see:
 - Total call count
 - Recent calls (last 15 minutes)
-- Usage chart (last 2 hours, 15-minute intervals)
+- Usage chart (last 2 hours, 5-minute intervals)
 - Recent call timestamps
 - Tool description and usage
 
@@ -94,17 +95,25 @@ Click on "Details" button on any tool card to see:
 ### File Operations
 
 #### dir_list
-List directory contents with tree structure.
+List directory contents with tree structure or flat list.
 
 **Parameters:**
 - `path` (string): Directory path (default: current directory)
-- `max_depth` (number, optional): Maximum recursion depth (default: 1, max: 1)
+- `max_depth` (number, optional): Maximum recursion depth (default: 2, max: 5)
+- `include_hidden` (boolean, optional): Include hidden files (default: false)
+- `pattern` (string, optional): Glob pattern to filter entries, e.g. `"*.rs"`
+- `brief` (boolean, optional): Brief mode — only return name, path, is_dir (default: true)
+- `sort_by` (string, optional): Sort by `"name"` (default), `"type"`, `"size"`, `"modified"`
+- `flatten` (boolean, optional): Return flat list instead of nested tree (default: false)
 
 **Example:**
 ```json
 {
   "path": "/project/src",
-  "max_depth": 1
+  "max_depth": 2,
+  "pattern": "*.rs",
+  "brief": true,
+  "sort_by": "name"
 }
 ```
 
@@ -114,20 +123,27 @@ Read text file content with line range support.
 **Parameters:**
 - `path` (string): File path
 - `start_line` (number, optional): Start line (0-indexed, default: 0)
-- `end_line` (number, optional): End line (default: 100)
+- `end_line` (number, optional): End line (default: 500)
+- `offset_chars` (number, optional): Character offset to start reading (alternative to start_line)
+- `max_chars` (number, optional): Maximum characters to return (default: 15000)
+- `line_numbers` (boolean, optional): Prefix each line with its line number (default: true)
+- `highlight_line` (number, optional): Highlight a specific line with `>>>` marker (1-based)
 
 **Features:**
-- 10KB character limit per read
-- Automatic truncation with notification
+- 15KB character limit per read (configurable via `max_chars`)
+- Automatic truncation with precise continuation hints
 - Returns total line count
-- Provides hint for reading more content
+- Line number prefixing for easy reference
+- Highlight line for pinpointing search results
 
 **Example:**
 ```json
 {
   "path": "config.json",
   "start_line": 0,
-  "end_line": 50
+  "end_line": 500,
+  "line_numbers": true,
+  "highlight_line": 42
 }
 ```
 
@@ -154,20 +170,96 @@ Search for keywords in files or directories.
 **Parameters:**
 - `path` (string): File or directory path
 - `keyword` (string): Search keyword
-- `max_depth` (number, optional): Maximum recursion depth (default: 3)
+- `file_pattern` (string, optional): Glob pattern to filter files, e.g. `"*.rs"`
+- `use_regex` (boolean, optional): Use regex matching (default: false)
+- `max_results` (number, optional): Maximum match results to return (default: 20)
+- `context_lines` (number, optional): Context lines around each match (default: 3)
+- `brief` (boolean, optional): Brief mode — only return file paths and line numbers (default: false)
+- `output_format` (string, optional): `"detailed"` (default), `"compact"`, or `"location"`
 
 **Features:**
-- Recursive directory search
-- Returns file paths and line numbers
-- Skips binary files (UTF-8 check)
+- Recursive directory search (max depth: 5)
+- Returns matching content snippets with surrounding context
+- Regex and literal keyword support
+- Skips binary files and blacklisted directories
 - Warns about deeper directories not searched
+- Compact mode returns only `file:line:matched_text`
+- Location mode returns only `file:line` (minimal token usage)
 
 **Example:**
 ```json
 {
   "path": "/project/src",
   "keyword": "TODO",
-  "max_depth": 3
+  "file_pattern": "*.rs",
+  "context_lines": 3,
+  "max_results": 10,
+  "output_format": "compact"
+}
+```
+
+#### file_edit
+Multi-mode file editing — string replacement, line-based operations, or unified diff patch.
+
+**Parameters:**
+- `path` (string): File path to edit
+- `mode` (string, optional): `"string_replace"` (default), `"line_replace"`, `"insert"`, `"delete"`, `"patch"`
+
+**string_replace mode:**
+- `old_string` (string): String to find (exact match, can span multiple lines)
+- `new_string` (string): Replacement string
+- `occurrence` (number, optional): Which occurrence to replace — `1`=first (default), `2`=second, `0`=replace all
+
+**line_replace / insert / delete mode:**
+- `start_line` (number): Start line (1-based, inclusive)
+- `end_line` (number): End line (1-based, inclusive). Not used for insert.
+- `new_string` (string): Content for replacement or insertion
+
+**patch mode:**
+- `patch` (string): Unified diff patch string
+
+**Features:**
+- `string_replace`: Exact string matching, multi-line support
+- `line_replace`: Replace lines by number — LLM does not need to output old content
+- `insert`: Insert content before a specific line
+- `delete`: Delete a range of lines
+- `patch`: Apply standard unified diff for complex multi-location changes
+- All modes return replacement summary with preview
+
+**Examples:**
+```json
+// String replacement
+{
+  "path": "src/main.rs",
+  "mode": "string_replace",
+  "old_string": "fn main() {",
+  "new_string": "fn main() -> Result<(), Box<dyn std::error::Error>> {",
+  "occurrence": 1
+}
+
+// Line replacement (no old_string needed!)
+{
+  "path": "src/main.rs",
+  "mode": "line_replace",
+  "start_line": 10,
+  "end_line": 15,
+  "new_string": "    let x = 42;\n    println!(\"{}\", x);"
+}
+
+// Insert before line 5
+{
+  "path": "src/main.rs",
+  "mode": "insert",
+  "start_line": 5,
+  "new_string": "use std::collections::HashMap;"
+}
+
+// Delete lines 20-25
+{
+  "path": "src/main.rs",
+  "mode": "delete",
+  "start_line": 20,
+  "end_line": 25
 }
 ```
 
@@ -181,6 +273,7 @@ Execute shell commands with security checks (dangerous).
 - `cwd` (string, optional): Working directory (default: current)
 - `timeout` (number, optional): Timeout in seconds (default: 30, max: 300)
 - `env` (object, optional): Environment variables as key-value pairs
+- `shell` (string, optional): Shell interpreter — `"cmd"` (default Windows), `"powershell"`, `"pwsh"`, `"sh"` (default Unix), `"bash"`, `"zsh"`
 
 **Security:**
 - Dangerous commands require two-step confirmation
@@ -192,7 +285,8 @@ Execute shell commands with security checks (dangerous).
 {
   "command": "ls -la",
   "cwd": "/home/user",
-  "timeout": 30
+  "timeout": 30,
+  "shell": "bash"
 }
 ```
 
@@ -238,21 +332,32 @@ Make HTTP requests.
 - `method` (string): "GET" or "POST"
 - `headers` (object, optional): HTTP headers
 - `body` (string, optional): Request body
+- `timeout` (number, optional): Timeout in seconds (default: 30)
+- `extract_json_path` (string, optional): JSON Pointer path to extract from JSON response, e.g. `"/data/0/name"`
+- `include_response_headers` (boolean, optional): Include response headers in output (default: false)
+- `max_response_chars` (number, optional): Maximum response body characters (default: 15000)
 
 **Example:**
 ```json
 {
   "url": "https://api.example.com/data",
-  "method": "GET"
+  "method": "GET",
+  "extract_json_path": "/data/0/name",
+  "max_response_chars": 5000
 }
 ```
 
-#### base64_encode / base64_decode
-Encode/decode base64.
+#### base64_codec
+Encode or decode base64.
+
+**Parameters:**
+- `operation` (string): `"encode"` or `"decode"`
+- `input` (string): String to encode, or base64 string to decode
 
 **Example:**
 ```json
 {
+  "operation": "encode",
   "input": "Hello, World!"
 }
 ```
@@ -261,7 +366,7 @@ Encode/decode base64.
 Compute hash of string or file.
 
 **Parameters:**
-- `input` (string): String to hash, or path with `@` prefix for file
+- `input` (string): String to hash, or path with `file:` prefix for file
 - `algorithm` (string): "MD5", "SHA1", or "SHA256"
 
 **Example:**
@@ -275,14 +380,112 @@ Compute hash of string or file.
 ### Image Tools
 
 #### image_read
-Read image file and return base64 encoded data.
+Read image file and return MCP-standard image content or metadata.
 
 **Parameters:**
 - `path` (string): Image file path
+- `mode` (string, optional): `"full"` (default) returns image data; `"metadata"` returns only dimensions and type
+
+**Returns (full mode):**
+- MCP `ImageContent` with raw base64 data and MIME type (enables vision-model encoding)
+- Human-readable `TextContent` with filename, dimensions, file size, and format
+
+**Returns (metadata mode):**
+- JSON text with image format, dimensions, and size
+
+### Development Tools
+
+#### file_stat
+Get file or directory metadata.
+
+**Parameters:**
+- `path` (string): File or directory path
 
 **Returns:**
-- Base64 encoded image data
-- Image format (png, jpeg, etc.)
+- `name`, `path`, `exists`
+- `file_type`: `"file"`, `"directory"`, `"symlink"`, or `"unknown"`
+- `size`: Size in bytes
+- `size_human`: Human-readable size string
+- `readable`, `writable`, `executable`: Permission booleans
+- `modified`, `created`, `accessed`: Timestamp strings
+- `is_symlink`: Whether the path is a symbolic link
+
+**Example:**
+```json
+{
+  "path": "src/main.rs"
+}
+```
+
+#### path_exists
+Lightweight path existence check.
+
+**Parameters:**
+- `path` (string): Path to check
+
+**Returns:**
+- `exists` (boolean)
+- `path_type`: `"file"`, `"dir"`, `"symlink"`, or `"none"`
+
+**Example:**
+```json
+{
+  "path": "src/main.rs"
+}
+```
+
+#### json_query
+Query a JSON file directly using JSON Pointer syntax.
+
+**Parameters:**
+- `path` (string): JSON file path
+- `query` (string): JSON Pointer path, e.g. `"/data/0/name"`
+- `max_chars` (number, optional): Maximum characters to return (default: 15000)
+
+**Returns:**
+- `found` (boolean)
+- `result`: The queried value (pretty-printed JSON)
+- `result_type`: Type information (e.g. `"object{5}"`, `"array[3]"`, `"string"`)
+
+**Example:**
+```json
+{
+  "path": "config.json",
+  "query": "/database/host"
+}
+```
+
+#### git_ops
+Run git commands in a repository.
+
+**Parameters:**
+- `action` (string): `"status"`, `"diff"`, `"log"`, `"branch"`, or `"show"`
+- `repo_path` (string, optional): Repository path (default: working directory)
+- `options` (array of strings, optional): Extra git arguments
+
+**Example:**
+```json
+{
+  "action": "log",
+  "options": ["--oneline", "-n", "10"]
+}
+```
+
+#### env_get
+Get the value of an environment variable.
+
+**Parameters:**
+- `name` (string): Environment variable name
+
+**Returns:**
+- `name`, `value`, `is_set` (boolean)
+
+**Example:**
+```json
+{
+  "name": "PATH"
+}
+```
 
 ## Configuration
 
@@ -303,6 +506,8 @@ Options:
       --log-level <LEVEL>              Log level: trace, debug, info, warn, error [default: info]
       --disable-webui                  Disable WebUI control panel
       --allow-dangerous-commands <IDS> Allowed dangerous command IDs (1-20)
+      --allowed-hosts <HOSTS>          Custom allowed Host headers for DNS rebinding protection (comma-separated)
+      --disable-allowed-hosts          Disable allowed_hosts check (NOT recommended for public deployments)
   -h, --help                           Print help
   -V, --version                        Print version
 ```
@@ -316,6 +521,7 @@ export MCP_WEBUI_PORT=8080
 export MCP_MAX_CONCURRENCY=20
 export MCP_LOG_LEVEL=debug
 export MCP_DISABLE_TOOLS="execute_command,process_list"
+export MCP_ALLOWED_HOSTS="192.168.1.100,example.com"
 ./rust-mcp-server
 ```
 
@@ -438,6 +644,20 @@ curl -X POST http://127.0.0.1:3344 \
   -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'
 ```
 
+**403 Forbidden: Host header is not allowed**
+
+This error occurs when the MCP server rejects the request due to DNS rebinding protection (rmcp v1.5.0+).
+
+**If using `--mcp-host 0.0.0.0`:** The server auto-detects local network interface IPs. If auto-detection fails, use one of the following:
+
+```bash
+# Option 1: Explicitly specify allowed hosts
+./rust-mcp-server --mcp-host 0.0.0.0 --allowed-hosts 192.168.1.100
+
+# Option 2: Disable the check (NOT recommended for public deployments)
+./rust-mcp-server --mcp-host 0.0.0.0 --disable-allowed-hosts
+```
+
 ### Performance Issues
 
 **Increase concurrency:**
@@ -447,6 +667,12 @@ curl -X POST http://127.0.0.1:3344 \
 
 **Monitor resource usage:**
 ```bash
+# Via WebUI HUD
+Open http://127.0.0.1:2233 and check the header system metrics
+
+# Via API
+curl http://127.0.0.1:2233/api/system-metrics
+
 # Linux/macOS
 top -p $(pgrep rust-mcp-server)
 

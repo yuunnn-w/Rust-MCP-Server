@@ -17,7 +17,7 @@ pub async fn process_list() -> Result<CallToolResult, String> {
     );
 
     // Refresh to get current CPU usage
-    std::thread::sleep(std::time::Duration::from_millis(200));
+    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
     system.refresh_processes(ProcessesToUpdate::All, true);
 
     let mut processes: Vec<ProcessInfo> = system

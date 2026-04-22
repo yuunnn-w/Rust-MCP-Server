@@ -1,248 +1,321 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="zh-CN">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Rust MCP Server - Control Panel</title>
-    <link rel="stylesheet" href="/style.css">
+    <title>AI Command Center — MCP Tool Management</title>
+    <link rel="stylesheet" href="style.css">
 </head>
 <body>
+    <canvas id="bg-canvas"></canvas>
+
     <div id="app">
-        <!-- Header -->
+        <!-- Header / HUD -->
         <header class="header">
             <div class="header-left">
-                <button id="menu-btn" class="menu-btn" title="Settings">
-                    <span></span>
-                    <span></span>
-                    <span></span>
-                </button>
-                <h1 data-i18n="app.title">Rust MCP Server</h1>
-                <button id="lang-switch" class="lang-btn">中/EN</button>
-            </div>
-            <div class="header-right">
-                <div class="concurrency-info">
-                    <span data-i18n="app.concurrency">Concurrency</span>: <span id="current-calls">0</span>/<span id="max-concurrency">10</span>
+                <div class="logo-pulse">
+                    <div class="logo-inner"></div>
                 </div>
-                <label class="switch global-switch">
-                    <input type="checkbox" id="mcp-toggle" checked>
-                    <span class="slider round"></span>
-                </label>
-                <span id="mcp-status" data-i18n="app.running">Running</span>
+                <div class="brand">
+                    <h1 id="brand-title">AI 命令中心</h1>
+                    <span class="brand-subtitle" id="brand-subtitle">MCP 工具管理平台</span>
+                </div>
+                <button class="lang-btn" id="lang-toggle">中文 / EN</button>
+                <button class="theme-btn" id="theme-toggle" title="切换主题">💻</button>
+            </div>
+
+            <div class="header-center">
+                <div class="hud-panel">
+                    <!-- CPU Ring -->
+                    <div class="hud-item">
+                        <div class="hud-ring" data-metric="cpu">
+                            <svg viewBox="0 0 42 42">
+                                <circle class="hud-ring-bg" cx="21" cy="21" r="18"></circle>
+                                <circle class="hud-ring-fill" cx="21" cy="21" r="18" stroke-dasharray="0 113" stroke-dashoffset="0"></circle>
+                            </svg>
+                            <span class="hud-value">0%</span>
+                        </div>
+                        <span class="hud-label">CPU</span>
+                    </div>
+
+                    <!-- Memory Bar -->
+                    <div class="hud-item">
+                        <div class="hud-bar-container" data-metric="memory">
+                            <div class="hud-bar"><div class="hud-bar-fill" style="width:0%"></div></div>
+                            <span class="hud-bar-value">0%</span>
+                        </div>
+                        <span class="hud-label">MEM</span>
+                    </div>
+
+                    <!-- Calls -->
+                    <div class="hud-item">
+                        <span class="hud-number" data-metric="calls">0</span>
+                        <span class="hud-label">CALLS</span>
+                    </div>
+
+                    <!-- Concurrency -->
+                    <div class="hud-item">
+                        <span class="hud-number" data-metric="concurrency">0</span>
+                        <span class="hud-label">CONC</span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="header-right">
+                <div class="mcp-control">
+                    <span class="mcp-status running" id="mcp-status">MCP运行中</span>
+                    <label class="neon-switch">
+                        <input type="checkbox" id="mcp-toggle" checked>
+                        <span class="slider"></span>
+                    </label>
+                </div>
+                <button class="about-btn" id="about-btn" title="关于">?</button>
+                <button class="menu-btn" id="menu-btn">
+                    <span></span><span></span><span></span>
+                </button>
             </div>
         </header>
 
-        <!-- Settings Sidebar -->
-        <aside id="sidebar" class="sidebar">
-            <div class="sidebar-header">
-                <h2 data-i18n="sidebar.title">Settings</h2>
-                <button id="close-sidebar" class="close-btn">&times;</button>
-            </div>
-            <div class="sidebar-content">
-                <div class="config-section">
-                    <h3 data-i18n="sidebar.currentConfig">Current Configuration</h3>
-                    <div class="config-item">
-                        <label data-i18n="config.webuiAddr">WebUI Address:</label>
-                        <span id="config-webui-addr">127.0.0.1:2233</span>
-                    </div>
-                    <div class="config-item">
-                        <label data-i18n="config.mcpTransport">MCP Transport:</label>
-                        <span id="config-transport">http</span>
-                    </div>
-                    <div class="config-item">
-                        <label data-i18n="config.mcpAddr">MCP Address:</label>
-                        <span id="config-mcp-addr">127.0.0.1:3344</span>
-                    </div>
-                    <div class="config-item">
-                        <label data-i18n="config.workingDir">Working Directory:</label>
-                        <span id="config-working-dir">.</span>
-                    </div>
-                    <div class="config-item">
-                        <label data-i18n="config.maxConcurrency">Max Concurrency:</label>
-                        <span id="config-max-concurrency">10</span>
-                    </div>
-                    <div class="config-item">
-                        <label data-i18n="config.logLevel">Log Level:</label>
-                        <span id="config-log-level">info</span>
-                    </div>
-                </div>
-                <div class="config-actions">
-                    <button id="edit-config-btn" class="btn btn-primary" data-i18n="sidebar.modifyConfig">Modify Config</button>
-                    <button id="restart-mcp-btn" class="btn btn-warning" data-i18n="sidebar.restartMcp">Restart MCP Service</button>
-                </div>
-            </div>
-        </aside>
-
-        <!-- Config Modal -->
-        <div id="config-modal" class="modal">
-            <div class="modal-content">
-                <div class="modal-header">
-                    <h3 data-i18n="config.modalTitle">Modify Configuration</h3>
-                    <button class="close-btn" onclick="closeModal('config-modal')">&times;</button>
-                </div>
-                <div class="modal-body">
-                    <div class="form-group">
-                        <label for="new-mcp-transport" data-i18n="config.mcpTransport">MCP Transport:</label>
-                        <select id="new-mcp-transport">
-                            <option value="http" selected>HTTP (JSON)</option>
-                            <option value="sse">SSE (Stream)</option>
-                        </select>
-                    </div>
-                    <div class="form-group">
-                        <label for="new-mcp-host" data-i18n="config.mcpHost">MCP Host:</label>
-                        <input type="text" id="new-mcp-host" placeholder="127.0.0.1">
-                    </div>
-                    <div class="form-group">
-                        <label for="new-mcp-port" data-i18n="config.mcpPort">MCP Port:</label>
-                        <input type="number" id="new-mcp-port" min="1" max="65535" placeholder="3344">
-                    </div>
-                    <div class="form-group">
-                        <label for="new-webui-host" data-i18n="config.webuiHost">WebUI Host:</label>
-                        <input type="text" id="new-webui-host" placeholder="127.0.0.1">
-                    </div>
-                    <div class="form-group">
-                        <label for="new-webui-port" data-i18n="config.webuiPort">WebUI Port:</label>
-                        <input type="number" id="new-webui-port" min="1" max="65535" placeholder="2233">
-                    </div>
-                    <div class="form-group">
-                        <label for="new-max-concurrency" data-i18n="config.maxConcurrency">Max Concurrency:</label>
-                        <input type="number" id="new-max-concurrency" min="1" max="1000" value="10">
-                    </div>
-                    <div class="form-group">
-                        <label for="new-log-level" data-i18n="config.logLevel">Log Level:</label>
-                        <select id="new-log-level">
-                            <option value="trace">trace</option>
-                            <option value="debug">debug</option>
-                            <option value="info" selected>info</option>
-                            <option value="warn">warn</option>
-                            <option value="error">error</option>
-                        </select>
-                    </div>
-                    <div class="form-group">
-                        <label for="new-working-dir" data-i18n="config.workingDir">Working Directory:</label>
-                        <input type="text" id="new-working-dir" placeholder=".">
-                    </div>
-                    <div class="form-note" data-i18n="config.restartNote">
-                        Note: Some configuration changes require server restart to take effect.
-                    </div>
-                </div>
-                <div class="modal-footer">
-                    <button class="btn btn-secondary" onclick="closeModal('config-modal')" data-i18n="common.cancel">Cancel</button>
-                    <button class="btn btn-primary" id="save-config-btn" data-i18n="common.save">Save</button>
-                </div>
-            </div>
-        </div>
-
-        <!-- Tool Detail Modal -->
-        <div id="tool-modal" class="modal">
-            <div class="modal-content modal-large">
-                <div class="modal-header">
-                    <h3 id="tool-modal-title" data-i18n="tools.detailsTitle">Tool Details</h3>
-                    <button class="close-btn" onclick="closeModal('tool-modal')">&times;</button>
-                </div>
-                <div class="modal-body">
-                    <div class="tool-info-section">
-                        <h4 data-i18n="tools.description">Description</h4>
-                        <p id="tool-description" class="tool-description-text"></p>
-                    </div>
-                    <div class="tool-info-section">
-                        <h4 data-i18n="tools.usage">Usage</h4>
-                        <pre id="tool-usage" class="tool-usage-text"></pre>
-                    </div>
-                    <div class="tool-stats">
-                        <div class="stat-card">
-                            <h4 data-i18n="tools.totalCalls">Total Calls</h4>
-                            <span id="tool-total-calls" class="stat-value">0</span>
-                        </div>
-                        <div class="stat-card">
-                            <h4 data-i18n="tools.last15Min">Last 15 Min</h4>
-                            <span id="tool-recent-calls" class="stat-value">0</span>
-                        </div>
-                    </div>
-                    <div class="chart-container">
-                        <h4 data-i18n="tools.callFrequencyChart">Call Frequency (Last 2 Hours)</h4>
-                        <canvas id="tool-chart"></canvas>
-                    </div>
-                    <div class="recent-calls">
-                        <h4 data-i18n="tools.recentCalls">Recent Calls</h4>
-                        <ul id="recent-calls-list"></ul>
-                    </div>
-                </div>
-            </div>
-        </div>
-
         <!-- Main Content -->
         <main class="main-content">
+            <div id="error-message" class="error-message" style="display:none"></div>
+            <div id="success-message" class="success-message" style="display:none"></div>
+
             <!-- Toolbar -->
             <div class="toolbar">
-                <div class="alphabet-nav">
-                    <button data-letter="all" class="active" data-i18n="tools.all">All</button>
-                    <button data-letter="a">A</button>
-                    <button data-letter="b">B</button>
-                    <button data-letter="c">C</button>
-                    <button data-letter="d">D</button>
-                    <button data-letter="e">E</button>
-                    <button data-letter="f">F</button>
-                    <button data-letter="g">G</button>
-                    <button data-letter="h">H</button>
-                    <button data-letter="i">I</button>
-                    <button data-letter="j">J</button>
-                    <button data-letter="k">K</button>
-                    <button data-letter="l">L</button>
-                    <button data-letter="m">M</button>
-                    <button data-letter="n">N</button>
-                    <button data-letter="o">O</button>
-                    <button data-letter="p">P</button>
-                    <button data-letter="q">Q</button>
-                    <button data-letter="r">R</button>
-                    <button data-letter="s">S</button>
-                    <button data-letter="t">T</button>
-                    <button data-letter="u">U</button>
-                    <button data-letter="v">V</button>
-                    <button data-letter="w">W</button>
-                    <button data-letter="x">X</button>
-                    <button data-letter="y">Y</button>
-                    <button data-letter="z">Z</button>
+                <div class="toolbar-left">
+                    <div class="alphabet-nav" id="alphabet-nav"></div>
                 </div>
-                <div class="toolbar-actions">
-                    <input type="text" id="search-input" placeholder="Search tools..." data-i18n-attr="placeholder:tools.searchPlaceholder">
-                    <select id="sort-select">
-                        <option value="name-asc" data-i18n="sort.nameAsc">Name A-Z</option>
-                        <option value="name-desc" data-i18n="sort.nameDesc">Name Z-A</option>
-                        <option value="calls-desc" data-i18n="sort.mostUsed">Most Used</option>
-                        <option value="calls-asc" data-i18n="sort.leastUsed">Least Used</option>
+                <div class="toolbar-right">
+                    <div class="search-box">
+                        <span class="search-prompt">&gt;</span>
+                        <input type="text" id="search-input" placeholder="搜索工具...">
+                    </div>
+                    <select class="sort-select" id="sort-select">
+                        <option value="name">按名称排序</option>
+                        <option value="calls">按调用次数排序</option>
+                        <option value="time">按时间排序</option>
                     </select>
                 </div>
             </div>
 
-            <!-- Safe Tools Section -->
-            <div id="safe-tools-section" class="tools-section safe-section">
+            <!-- Safe Tools -->
+            <div class="tools-section" id="safe-section">
                 <div class="section-header safe-header">
-                    <span class="section-icon">✓</span>
-                    <span data-i18n="tools.safeTools">Safe Tools</span>
+                    <span class="section-icon"><svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12l5-5 5 5M5 7l5-5 5 5"/></svg></span>
+                    <span id="safe-header-text">安全工具</span>
+                    <span class="section-line"></span>
                 </div>
-                <div id="tools-grid-safe" class="tools-grid">
-                    <!-- Safe tools will be dynamically inserted here -->
-                </div>
+                <div class="tools-grid" id="safe-tools"></div>
             </div>
 
-            <!-- Dangerous Tools Section -->
-            <div id="dangerous-tools-section" class="tools-section dangerous-section">
+            <!-- Dangerous Tools -->
+            <div class="tools-section" id="danger-section">
                 <div class="section-header dangerous-header">
-                    <span class="section-icon">⚠</span>
-                    <span data-i18n="tools.dangerousTools">Dangerous Tools</span>
+                    <span class="section-icon"><svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 9v2m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/></svg></span>
+                    <span id="danger-header-text">危险工具</span>
+                    <span class="section-line"></span>
                 </div>
-                <div id="tools-grid-dangerous" class="tools-grid">
-                    <!-- Dangerous tools will be dynamically inserted here -->
-                </div>
+                <div class="tools-grid" id="dangerous-tools"></div>
             </div>
         </main>
 
+        <!-- Terminal Panel -->
+        <div class="terminal-panel" id="terminal-panel">
+            <div class="terminal-header" id="terminal-header">
+                <div class="terminal-title">
+                    <span class="terminal-dot"></span>
+                    <span id="terminal-title-text">系统日志流</span>
+                </div>
+                <div class="terminal-controls">
+                    <button class="terminal-btn" id="terminal-clear">CLEAR</button>
+                    <button class="terminal-btn" id="terminal-toggle">[ - ]</button>
+                </div>
+            </div>
+            <div class="terminal-body" id="terminal-logs"></div>
+        </div>
+
         <!-- Footer -->
         <footer class="footer">
-            <p>Rust MCP Server v0.1.0 | <a href="https://github.com/modelcontextprotocol" target="_blank" data-i18n="footer.documentation">Documentation</a></p>
+            <span class="footer-blink">●</span> AI Command Center — Powered by Rust MCP Server &nbsp;|&nbsp;
+            <a href="https://github.com/yuunnn-w/Rust-MCP-Server" target="_blank">GitHub</a>
         </footer>
     </div>
 
-    <script src="/script.js"></script>
+    <!-- Sidebar -->
+    <div class="sidebar" id="sidebar">
+        <div class="sidebar-header">
+            <h2 id="sidebar-title">配置</h2>
+            <button class="close-btn" id="close-sidebar">&times;</button>
+        </div>
+        <div class="sidebar-content">
+            <div class="config-section">
+                <h3 id="config-section-title">系统配置</h3>
+                <div class="config-grid" id="config-grid"></div>
+            </div>
+            <div class="config-actions">
+                <button class="btn btn-primary" id="edit-config-btn">编辑配置</button>
+                <button class="btn btn-warning" id="restart-btn">重启服务器</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Overlay -->
+    <div class="overlay" id="overlay"></div>
+
+    <!-- Tool Info Modal -->
+    <div class="modal" id="tool-modal">
+        <div class="modal-content modal-large">
+            <div class="modal-header">
+                <h3 id="modal-tool-name"></h3>
+                <button class="close-btn" id="close-tool-modal">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="tool-info-section">
+                    <h4 id="tool-info-title">工具信息</h4>
+                    <div class="tool-description-text" id="modal-tool-description"></div>
+                </div>
+                <div class="tool-info-section">
+                    <h4 id="tool-usage-title">使用说明</h4>
+                    <div class="tool-usage-text" id="modal-tool-usage"></div>
+                </div>
+                <div class="tool-stats">
+                    <div class="stat-card"><h4 id="stat-call-count-label">调用次数</h4><div class="stat-value" id="modal-call-count">0</div></div>
+                    <div class="stat-card"><h4 id="stat-last-call-label">最后调用</h4><div class="stat-value" id="modal-last-call" style="font-size:1rem">N/A</div></div>
+                    <div class="stat-card"><h4 id="stat-avg-duration-label">平均耗时</h4><div class="stat-value" id="modal-avg-duration" style="font-size:1rem">N/A</div></div>
+                    <div class="stat-card"><h4 id="stat-error-rate-label">错误率</h4><div class="stat-value" id="modal-error-rate" style="font-size:1rem">N/A</div></div>
+                </div>
+                <div class="chart-container">
+                    <h4 id="chart-title">调用趋势</h4>
+                    <canvas id="tool-chart"></canvas>
+                </div>
+                <div class="recent-calls">
+                    <h4 id="recent-calls-title">最近调用</h4>
+                    <ul id="recent-calls-list"></ul>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-primary" id="tool-modal-toggle">启用</button>
+                <button class="btn btn-secondary" id="close-tool-modal-btn">关闭</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Config Modal -->
+    <div class="modal" id="config-modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3 id="config-modal-title">系统配置</h3>
+                <button class="close-btn" id="close-config-modal">&times;</button>
+            </div>
+            <div class="modal-body">
+                <form id="config-form">
+                    <div class="form-group">
+                        <label for="cfg-webui-host">WebUI Host</label>
+                        <input type="text" id="cfg-webui-host" name="webui_host">
+                    </div>
+                    <div class="form-group">
+                        <label for="cfg-webui-port">WebUI Port</label>
+                        <input type="number" id="cfg-webui-port" name="webui_port" min="1" max="65535">
+                    </div>
+                    <div class="form-group">
+                        <label for="cfg-mcp-transport">MCP Transport</label>
+                        <select id="cfg-mcp-transport" name="mcp_transport">
+                            <option value="http">HTTP</option>
+                            <option value="sse">SSE</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label for="cfg-mcp-host">MCP Host</label>
+                        <input type="text" id="cfg-mcp-host" name="mcp_host">
+                    </div>
+                    <div class="form-group">
+                        <label for="cfg-mcp-port">MCP Port</label>
+                        <input type="number" id="cfg-mcp-port" name="mcp_port" min="1" max="65535">
+                    </div>
+                    <div class="form-group">
+                        <label for="cfg-max-concurrency">Max Concurrency</label>
+                        <input type="number" id="cfg-max-concurrency" name="max_concurrency" min="1" max="1000">
+                    </div>
+                    <div class="form-group">
+                        <label for="cfg-working-dir">Working Directory</label>
+                        <input type="text" id="cfg-working-dir" name="working_dir">
+                    </div>
+                    <div class="form-group">
+                        <label for="cfg-log-level">Log Level</label>
+                        <select id="cfg-log-level" name="log_level">
+                            <option value="trace">trace</option>
+                            <option value="debug">debug</option>
+                            <option value="info">info</option>
+                            <option value="warn">warn</option>
+                            <option value="error">error</option>
+                        </select>
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-primary" id="save-config-btn">保存</button>
+                <button class="btn btn-secondary" id="cancel-config-btn">取消</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- About Modal -->
+    <div class="modal" id="about-modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3 id="about-modal-title">关于</h3>
+                <button class="close-btn" id="close-about-modal">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="about-section">
+                    <div class="about-logo">
+                        <div class="logo-pulse">
+                            <div class="logo-inner"></div>
+                        </div>
+                    </div>
+                    <h2 class="about-name">Rust MCP Server</h2>
+                    <div class="about-version" id="about-version">v0.2.0</div>
+                    <p class="about-desc" id="about-desc">A high-performance Model Context Protocol (MCP) server with WebUI control panel.</p>
+                    <div class="about-meta">
+                        <div class="about-meta-item">
+                            <span class="about-meta-label" id="about-author-label">作者</span>
+                            <span class="about-meta-value" id="about-author">MCP Server Team</span>
+                        </div>
+                        <div class="about-meta-item">
+                            <span class="about-meta-label" id="about-license-label">许可证</span>
+                            <span class="about-meta-value">GPL-3.0</span>
+                        </div>
+                    </div>
+                    <a href="https://github.com/yuunnn-w/Rust-MCP-Server" target="_blank" class="about-github" id="about-github">
+                        <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
+                        <span>GitHub</span>
+                    </a>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" id="close-about-btn">关闭</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Restart Modal -->
+    <div class="modal" id="restart-modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>确认重启</h3>
+                <button class="close-btn" id="close-restart-modal">&times;</button>
+            </div>
+            <div class="modal-body">
+                <p id="restart-message" style="color:var(--text-secondary);line-height:1.6;"></p>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-warning" id="confirm-restart">确认重启</button>
+                <button class="btn btn-secondary" id="cancel-restart">取消</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="script.js"></script>
 </body>
 </html>

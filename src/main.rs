@@ -23,9 +23,6 @@ async fn main() -> anyhow::Result<()> {
     // Create shared state
     let state = ServerState::new(config.clone());
 
-    // Create shutdown signal
-    let (_shutdown_tx, mut shutdown_rx) = tokio::sync::mpsc::channel::<()>(1);
-
     // Start WebUI server if not disabled
     let _web_handle = if !config.disable_webui {
         let state = state.clone();
@@ -67,9 +64,6 @@ async fn main() -> anyhow::Result<()> {
     tokio::select! {
         _ = tokio::signal::ctrl_c() => {
             info!("Received shutdown signal (Ctrl+C)");
-        }
-        _ = shutdown_rx.recv() => {
-            info!("Received shutdown signal");
         }
         result = mcp_handle => {
             if let Err(e) = result {

@@ -34,9 +34,10 @@ Rust MCP Server 是一个使用 Rust 构建的高性能 [模型上下文协议 (
 ## 功能特性
 
 ### 核心功能
-- **18 个内置工具**: 文件操作、HTTP 请求、计算、系统信息等
-- **WebUI 控制面板**: 现代化的 Web 界面，用于管理工具和监控
+- **20 个内置工具**: 文件操作、HTTP 请求、计算、系统信息、Base64 编解码、Git 操作、JSON 查询等
+- **WebUI 控制面板**: Cyberpunk AI Command Center 主题，玻璃态 HUD、动态背景、终端日志流、3D 卡片悬浮效果
 - **实时更新**: 基于 SSE 的实时状态更新
+- **系统指标监控**: 实时 CPU、内存、负载监控（HUD + `/api/system-metrics` 端点）
 - **多传输支持**: HTTP（默认，JSON 响应）和 SSE（流式响应）传输
 - **并发控制**: 可配置的最大并发工具调用数
 - **国际化支持**: 支持英文和中文
@@ -53,35 +54,37 @@ Rust MCP Server 是一个使用 Rust 构建的高性能 [模型上下文协议 (
 #### 文件操作（安全）
 | 工具 | 描述 | 危险 |
 |------|-------------|------|
-| `dir_list` | 树形结构列出目录内容 | 否 |
-| `file_read` | 读取文本文件内容，支持行范围 | 否 |
-| `file_search` | 在文件/目录中搜索关键词 | 否 |
-| `image_read` | 读取图像文件并返回 base64 数据 | 否 |
+| `dir_list` | 树形或扁平结构列出目录内容 | 否 |
+| `file_read` | 读取文本文件内容，支持行范围和行高亮 | 否 |
+| `file_search` | 搜索关键词，支持详细/紧凑/位置三种输出模式 | 否 |
+| `file_edit` | 多模式编辑：string_replace、line_replace、insert、delete、patch | 是 |
+| `file_stat` | 获取文件/目录元数据（大小、权限、时间戳） | 否 |
+| `path_exists` | 轻量级路径存在性检查 | 否 |
+| `json_query` | 使用 JSON Pointer 语法查询 JSON 文件 | 否 |
+| `image_read` | 读取图像文件，返回标准 MCP ImageContent（供视觉编码器使用）及元数据 | 否 |
 
 #### 文件操作（危险 - 默认禁用）
 | 工具 | 描述 | 安全检查 |
 |------|-------------|----------|
 | `file_write` | 写入文件内容 | 工作目录检查 |
-| `file_copy` | 复制文件到新位置 | 工作目录检查 |
-| `file_move` | 移动文件到新位置 | 工作目录检查 |
-| `file_delete` | 删除文件 | 工作目录检查 |
-| `file_rename` | 重命名文件 | 工作目录检查 |
+| `file_ops` | 复制、移动、删除或重命名文件 | 工作目录检查 |
 
-#### 系统和网络工具
+#### 系统与网络工具
 | 工具 | 描述 | 默认状态 |
 |------|-------------|----------|
-| `execute_command` | 执行带安全检查的 shell 命令 | 禁用 |
+| `execute_command` | 执行带安全检查的 shell 命令，支持指定解释器 | 禁用 |
 | `process_list` | 列出系统进程 | 禁用 |
 | `system_info` | 获取系统信息 | 禁用 |
-| `http_request` | 发起 HTTP GET/POST 请求 | 禁用 |
+| `http_request` | 发起 HTTP GET/POST/PUT/DELETE/PATCH/HEAD 请求 | 禁用 |
+| `git_ops` | 运行 git 命令（status、diff、log、branch、show） | 启用 |
+| `env_get` | 获取环境变量值 | 启用 |
 
 #### 实用工具
 | 工具 | 描述 |
 |------|-------------|
 | `calculator` | 计算数学表达式 |
 | `datetime` | 获取当前日期/时间（中国时区） |
-| `base64_encode` | 字符串编码为 base64 |
-| `base64_decode` | base64 解码为字符串 |
+| `base64_codec` | Base64 编码/解码 |
 | `hash_compute` | 计算 MD5/SHA1/SHA256 哈希 |
 
 ## 快速开始
@@ -107,6 +110,15 @@ cd Rust-MCP-Server
 
 # 或使用 cargo 手动构建
 cargo build --release
+```
+
+#### Windows 7 兼容性编译
+
+若需要在 Windows 7 平台上运行，请使用以下命令进行交叉编译：
+
+```bash
+rustup update nightly
+cargo +nightly build -Z build-std=std,panic_abort --target x86_64-win7-windows-msvc --release
 ```
 
 ### 使用方法
@@ -148,14 +160,16 @@ http://127.0.0.1:2233
 | `--mcp-port` | `MCP_PORT` | `3344` | MCP 服务端口 |
 | `--max-concurrency` | `MCP_MAX_CONCURRENCY` | `10` | 最大并发调用数 |
 | `--working-dir` | `MCP_WORKING_DIR` | `.` | 文件操作工作目录 |
-| `--disable-tools` | `MCP_DISABLE_TOOLS` | 见下文 | 禁用的工具列表（默认禁用14个，启用4个） |
+| `--disable-tools` | `MCP_DISABLE_TOOLS` | 见下文 | 禁用的工具列表（默认禁用10个，启用10个） |
 | `--allow-dangerous-commands` | `MCP_ALLOW_DANGEROUS_COMMANDS` | - | 允许的危险命令 ID |
 | `--log-level` | `MCP_LOG_LEVEL` | `info` | 日志级别 |
 | `--disable-webui` | - | - | 禁用 WebUI 面板 |
+| `--allowed-hosts` | `MCP_ALLOWED_HOSTS` | - | 自定义允许的 Host 头（逗号分隔） |
+| `--disable-allowed-hosts` | `MCP_DISABLE_ALLOWED_HOSTS` | - | 禁用 DNS 重绑定保护（不推荐公网使用） |
 
 **默认工具状态：**
-- **默认启用（4个）：** `calculator`、`dir_list`、`file_read`、`file_search`
-- **默认禁用（14个）：** `file_write`、`file_copy`、`file_move`、`file_delete`、`file_rename`、`http_request`、`datetime`、`image_read`、`execute_command`、`process_list`、`base64_encode`、`base64_decode`、`hash_compute`、`system_info`
+- **默认启用（10个）：** `calculator`、`dir_list`、`file_read`、`file_search`、`image_read`、`file_stat`、`path_exists`、`json_query`、`git_ops`、`env_get`
+- **默认禁用（10个）：** `file_write`、`file_ops`、`file_edit`、`http_request`、`datetime`、`execute_command`、`process_list`、`base64_codec`、`hash_compute`、`system_info`
 
 ### 危险命令 ID
 
@@ -239,7 +253,7 @@ Rust-MCP-Server/
 │   │   ├── handler.rs       # MCP 协议处理器
 │   │   ├── state.rs         # 共享服务器状态
 │   │   └── tools/           # 工具实现
-│   ├── utils/               # 工具函数
+│   ├── utils/               # 工具函数（文件、图像、系统指标）
 │   └── web/                 # WebUI 和 HTTP API
 ├── scripts/                 # 构建脚本
 ├── docs/                    # 文档

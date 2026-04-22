@@ -4,7 +4,7 @@
 
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
-│                        Rust MCP Server v0.1.0                        │
+│                        Rust MCP Server v0.2.0                       │
 ├─────────────────────────────────────────────────────────────────────┤
 │  ┌─────────────────┐  ┌─────────────────┐  ┌─────────────────────┐  │
 │  │   WebUI (Axum)  │  │  MCP 服务       │  │   工具注册表        │  │
@@ -15,10 +15,13 @@
 │  │  ┌───────────┐  │  │  │ 传输层   │   │  │  │ file_write    │  │  │
 │  │  │ REST API  │  │  │  └──────────┘   │  │  │ execute_cmd   │  │  │
 │  │  │ /api/*    │  │  │                 │  │  │ calculator    │  │  │
-│  │  └───────────┘  │  │                 │  │  │ ... (18工具)  │  │  │
+│  │  └───────────┘  │  │                 │  │  │ ... (20工具)  │  │  │
 │  │  ┌───────────┐  │  │                 │  │  └───────────────┘  │  │
 │  │  │ SSE       │  │  │                 │  │                     │  │
 │  │  │ /events   │  │  │                 │  │                     │  │
+│  │  └───────────┘  │  │                 │  │                     │  │
+│  │  ┌───────────┐  │  │                 │  │                     │  │
+│  │  │ 系统指标   │  │  │                 │  │                     │  │
 │  │  └───────────┘  │  │                 │  │                     │  │
 │  └─────────────────┘  └─────────────────┘  └─────────────────────┘  │
 ├─────────────────────────────────────────────────────────────────────┤
@@ -50,6 +53,8 @@ WebUI 提供了一个现代化的控制面板来管理 MCP 服务器。
 - `GET /api/tool/{name}/detail` - 获取工具详情
 - `POST /api/tool/{name}/enable` - 启用/禁用工具
 - `GET /api/server-status` - 服务器运行状态
+- `GET /api/system-metrics` - 获取实时 CPU、内存、负载指标
+- `GET /api/version` - 获取服务器版本信息
 - `GET /api/config` - 获取配置
 - `PUT /api/config` - 更新配置
 - `POST /api/mcp/{start|stop|restart}` - MCP 服务控制
@@ -73,19 +78,26 @@ WebUI 提供了一个现代化的控制面板来管理 MCP 服务器。
 
 ### 工具注册表
 
-18 个内置工具，按类别组织：
+20 个内置工具，按类别组织：
 
 #### 文件操作类（8 个工具）
 | 工具名 | 描述 | 危险操作 |
 |--------|------|----------|
-| `dir_list` | 列出目录内容（树形结构，最大深度3） | 否 |
+| `dir_list` | 列出目录内容（树形结构，最大深度5） | 否 |
 | `file_read` | 读取文本文件内容（支持行范围） | 否 |
-| `file_search` | 在文件或目录中搜索关键词（最大深度3） | 否 |
+| `file_search` | 在文件或目录中搜索关键词（最大深度5） | 否 |
 | `file_write` | 写入文件内容（创建/追加/覆盖） | 是 |
-| `file_copy` | 复制文件到新位置 | 是 |
-| `file_move` | 移动文件到新位置 | 是 |
-| `file_delete` | 删除文件 | 是 |
-| `file_rename` | 重命名文件 | 是 |
+| `file_ops` | 复制、移动、删除或重命名文件 | 是 |
+| `file_edit` | 多模式文件编辑（string_replace、line_replace、insert、delete、patch） | 是 |
+| `file_stat` | 获取文件或目录的元数据 | 否 |
+| `path_exists` | 轻量级路径存在性检查 | 否 |
+
+#### 查询与环境类（3 个工具）
+| 工具名 | 描述 | 危险操作 |
+|--------|------|----------|
+| `json_query` | 使用 JSON Pointer 语法查询 JSON 文件 | 否 |
+| `git_ops` | 在仓库中运行 git 命令 | 否 |
+| `env_get` | 获取环境变量的值 | 否 |
 
 #### 系统工具类（3 个工具）
 | 工具名 | 描述 | 危险操作 |
@@ -94,20 +106,39 @@ WebUI 提供了一个现代化的控制面板来管理 MCP 服务器。
 | `system_info` | 获取系统信息 | 否 |
 | `execute_command` | 在指定目录执行 shell 命令 | 是 |
 
-#### 实用工具类（5 个工具）
+#### 实用工具类（4 个工具）
 | 工具名 | 描述 | 危险操作 |
 |--------|------|----------|
 | `calculator` | 计算数学表达式 | 否 |
 | `datetime` | 获取中国格式的当前日期时间 | 否 |
-| `base64_encode` | 将字符串编码为 base64 | 否 |
-| `base64_decode` | 将 base64 解码为字符串 | 否 |
+| `base64_codec` | 编码或解码 base64 字符串 | 否 |
 | `hash_compute` | 计算字符串或文件的哈希值（MD5/SHA1/SHA256） | 否 |
 
 #### 网络与图像类（2 个工具）
 | 工具名 | 描述 | 危险操作 |
 |--------|------|----------|
 | `http_request` | 发起 HTTP GET 或 POST 请求 | 否 |
-| `image_read` | 读取图像文件并返回 base64 编码数据 | 否 |
+| `image_read` | 读取图像文件并返回标准 MCP ImageContent + TextContent 元数据 | 否 |
+
+### 资源 (Resources)
+
+服务器将工作目录暴露为 MCP 资源（`file:///`）。客户端可以：
+- **列出资源**：获取工作目录条目，包含 `uri`、`name` 和 `description`
+- **读取资源**：通过 `file:///{相对路径}` 获取目录列表或文件内容
+
+资源内容以 `TextResourceContents` 形式返回，MIME 类型为 `text/plain`。
+
+### 提示词 (Prompts)
+
+3 个内置提示词可供客户端使用：
+
+| 提示词 | 描述 |
+|--------|-------------|
+| `system_diagnosis` | 分析系统信息并识别问题的指南 |
+| `file_analysis` | 分析代码文件和目录结构的指南 |
+| `security_checklist` | 执行危险操作前的检查清单 |
+
+提示词通过 `prompts/get` 获取，返回一系列 `User` 角色的 `PromptMessage`。
 
 ### 服务器状态 (ServerState)
 
@@ -198,12 +229,11 @@ WebUI 提供了一个现代化的控制面板来管理 MCP 服务器。
 
 **默认禁用的工具：**
 ```
-file_write,file_copy,file_move,file_delete,file_rename,
-http_request,datetime,image_read,execute_command,process_list,
-base64_encode,base64_decode,hash_compute,system_info
+file_write,file_ops,file_edit,http_request,datetime,
+execute_command,process_list,base64_codec,hash_compute,system_info
 ```
 
-默认仅启用 `calculator`、`dir_list`、`file_read`、`file_search`。
+以下 10 个工具默认启用：`calculator`、`dir_list`、`file_read`、`file_search`、`image_read`、`file_stat`、`path_exists`、`json_query`、`git_ops`、`env_get`。
 
 ## 技术栈
 
@@ -215,6 +245,7 @@ base64_encode,base64_decode,hash_compute,system_info
 - **CLI 解析**: clap
 - **并发**: tokio::sync (Semaphore, RwLock)
 - **集合**: dashmap（并发 HashMap）
+- **系统指标**: sysinfo（CPU、内存、进程监控）
 
 ---
 

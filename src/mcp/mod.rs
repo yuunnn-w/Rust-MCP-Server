@@ -13,7 +13,7 @@ use rmcp::transport::streamable_http_server::{
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tower_http::cors::{Any, CorsLayer};
-use tracing::{error, info};
+use tracing::{info, warn};
 
 /// Build Streamable HTTP server config from AppConfig
 /// http mode: stateless + json response
@@ -28,21 +28,77 @@ fn build_streamable_config(config: &AppConfig, ct: tokio_util::sync::Cancellatio
         config.mcp_transport, stateful_mode, json_response
     );
     
-    StreamableHttpServerConfig {
-        stateful_mode,
-        json_response,
-        cancellation_token: ct,
-        ..Default::default()
+    let base_config = StreamableHttpServerConfig::default()
+        .with_stateful_mode(stateful_mode)
+        .with_json_response(json_response)
+        .with_cancellation_token(ct);
+    
+    // User explicitly disables allowed hosts check
+    if config.disable_allowed_hosts {
+        info!("allowed_hosts check is disabled via --disable-allowed-hosts");
+        return base_config.disable_allowed_hosts();
     }
+    
+    // User explicitly specifies allowed hosts
+    if let Some(ref custom_hosts) = config.allowed_hosts {
+        info!("Using custom allowed_hosts: {:?}", custom_hosts);
+        return base_config.with_allowed_hosts(custom_hosts.clone());
+    }
+    
+    // Auto-detect allowed_hosts based on bind configuration
+    let mut allowed_hosts = vec![
+        "localhost".to_string(),
+        "127.0.0.1".to_string(),
+        "::1".to_string(),
+    ];
+    
+    if config.mcp_host == "0.0.0.0" {
+        // 0.0.0.0 listens on all interfaces; we need to discover actual local IPs
+        // because clients will send Host headers with the specific IP they connect to.
+        info!("mcp_host is 0.0.0.0, auto-detecting network interface IPs for allowed_hosts");
+        match get_if_addrs::get_if_addrs() {
+            Ok(ifaces) => {
+                for iface in ifaces {
+                    let ip_str = iface.ip().to_string();
+                    if !allowed_hosts.contains(&ip_str) {
+                        allowed_hosts.push(ip_str);
+                    }
+                }
+            }
+            Err(e) => {
+                warn!("Failed to auto-detect network interfaces: {}. Falling back to disable allowed_hosts.", e);
+                return base_config.disable_allowed_hosts();
+            }
+        }
+    } else {
+        // Specific bind address: add it and its port-qualified form
+        if !config.mcp_host.is_empty() && !allowed_hosts.contains(&config.mcp_host) {
+            allowed_hosts.push(config.mcp_host.clone());
+        }
+        let mcp_with_port = format!("{}:{}", config.mcp_host, config.mcp_port);
+        if !allowed_hosts.contains(&mcp_with_port) {
+            allowed_hosts.push(mcp_with_port);
+        }
+        if !config.webui_host.is_empty() 
+            && config.webui_host != config.mcp_host 
+            && !allowed_hosts.contains(&config.webui_host) {
+            allowed_hosts.push(config.webui_host.clone());
+        }
+    }
+    
+    info!("allowed_hosts: {:?}", allowed_hosts);
+    base_config.with_allowed_hosts(allowed_hosts)
 }
 
-/// Start MCP server with HTTP transport
-pub async fn start_http_server(
+/// Start MCP server with the configured transport
+pub async fn start_server(
     state: Arc<ServerState>,
     config: AppConfig,
 ) -> anyhow::Result<()> {
+    let transport_name = config.mcp_transport.clone();
     info!(
-        "Starting MCP server with HTTP transport on {}",
+        "Starting MCP server with {} transport on {}",
+        transport_name,
         config.mcp_bind_addr()
     );
 
@@ -78,7 +134,7 @@ pub async fn start_http_server(
     let listener = tokio::net::TcpListener::bind(bind_addr).await?;
     
     state.set_mcp_running(true).await;
-    info!("MCP HTTP server listening on http://{}/mcp", bind_addr);
+    info!("MCP {} server listening on http://{}/mcp", transport_name, bind_addr);
 
     axum::serve(listener, app)
         .with_graceful_shutdown(async move {
@@ -88,82 +144,7 @@ pub async fn start_http_server(
         .await?;
 
     state.set_mcp_running(false).await;
-    info!("MCP HTTP server stopped");
+    info!("MCP {} server stopped", transport_name);
 
     Ok(())
-}
-
-/// Start MCP server with SSE transport (HTTP with SSE support)
-pub async fn start_sse_server(
-    state: Arc<ServerState>,
-    config: AppConfig,
-) -> anyhow::Result<()> {
-    info!(
-        "Starting MCP server with SSE transport on {}",
-        config.mcp_bind_addr()
-    );
-
-    let bind_addr: SocketAddr = config.mcp_bind_addr().parse()?;
-    let ct = tokio_util::sync::CancellationToken::new();
-
-    // Clone state for the closure
-    let state_for_closure = state.clone();
-    let config_for_closure = config.clone();
-    
-    // Create the service factory - SSE uses the same StreamableHttpService
-    let service = StreamableHttpService::new(
-        move || {
-            let handler = Handler::new(state_for_closure.clone(), &config_for_closure);
-            Ok(handler)
-        },
-        LocalSessionManager::default().into(),
-        build_streamable_config(&config, ct.child_token()),
-    );
-
-    // Create CORS layer to allow cross-origin requests
-    let cors = CorsLayer::new()
-        .allow_origin(Any)
-        .allow_methods([Method::GET, Method::POST, Method::DELETE])
-        .allow_headers(Any);
-
-    // Create router with MCP endpoint
-    let app = axum::Router::new()
-        .nest_service("/mcp", service)
-        .layer(cors);
-
-    // Start server
-    let listener = tokio::net::TcpListener::bind(bind_addr).await?;
-    
-    state.set_mcp_running(true).await;
-    info!("MCP SSE server listening on http://{}/mcp", bind_addr);
-
-    axum::serve(listener, app)
-        .with_graceful_shutdown(async move {
-            tokio::signal::ctrl_c().await.ok();
-            ct.cancel();
-        })
-        .await?;
-
-    state.set_mcp_running(false).await;
-    info!("MCP SSE server stopped");
-
-    Ok(())
-}
-
-/// Start MCP server with the configured transport
-pub async fn start_server(
-    state: Arc<ServerState>,
-    config: AppConfig,
-) -> anyhow::Result<()> {
-    match config.mcp_transport.as_str() {
-        "http" => start_http_server(state, config).await,
-        "sse" => start_sse_server(state, config).await,
-        _ => {
-            error!("Unsupported transport: {}. Use 'http' or 'sse'", config.mcp_transport);
-            Err(anyhow::anyhow!(
-                "Unsupported transport: {}. Use 'http' or 'sse'",
-                config.mcp_transport
-            ))
-        }
-    }
 }

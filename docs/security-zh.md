@@ -199,29 +199,31 @@ RUST_LOG=debug ./rust-mcp-server
 
 ## 工具分类
 
-### 安全工具（11个）
+### 安全工具（16个）
 这些工具默认启用是安全的：
 - `calculator` - 数学计算
 - `dir_list` - 目录列表
 - `file_read` - 文件读取
 - `file_search` - 文件内容搜索
 - `datetime` - 日期/时间
-- `base64_encode` - Base64 编码
-- `base64_decode` - Base64 解码
+- `base64_codec` - Base64 编码/解码
 - `hash_compute` - 哈希计算
 - `http_request` - HTTP 请求
 - `image_read` - 图像读取
 - `system_info` - 系统信息
+- `file_stat` - 文件/目录元数据
+- `path_exists` - 路径存在性检查
+- `json_query` - JSON 文件查询
+- `env_get` - 环境变量读取
+- `git_ops` - Git 仓库只读操作
+- `process_list` - 系统进程列表
 
-### 危险工具（7个）
+### 危险工具（4个）
 这些工具需要谨慎使用：
 - `file_write` - 文件写入（可能覆盖数据）
-- `file_copy` - 文件复制
-- `file_move` - 文件移动
-- `file_delete` - 文件删除
-- `file_rename` - 文件重命名
+- `file_ops` - 复制、移动、删除或重命名文件
+- `file_edit` - 多模式文件编辑（可能修改文件）
 - `execute_command` - Shell 命令执行
-- `process_list` - 进程列表（信息泄露）
 
 ## 最佳实践
 
@@ -238,7 +240,7 @@ RUST_LOG=debug ./rust-mcp-server
 2. **默认工具策略**
    ```bash
    # 从最小工具集开始
-   ./rust-mcp-server --disable-tools file_write,file_copy,file_move,file_delete,file_rename,execute_command,http_request
+   ./rust-mcp-server --disable-tools file_write,file_ops,file_edit,execute_command,http_request
    ```
    - 按需启用工具
    - 仅在受信任环境中启用 `execute_command`

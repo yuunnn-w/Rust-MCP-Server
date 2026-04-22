@@ -1,7 +1,9 @@
+use crate::utils::file_utils::ensure_path_within_working_dir;
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::model::CallToolResult;
 use rmcp::schemars::JsonSchema;
 use serde::Deserialize;
+use sha1::Sha1;
 use sha2::{Digest, Sha256};
 use std::path::Path;
 
@@ -15,15 +17,18 @@ pub struct HashComputeParams {
     pub algorithm: Option<String>,
 }
 
-pub async fn hash_compute(params: Parameters<HashComputeParams>) -> Result<CallToolResult, String> {
+pub async fn hash_compute(
+    params: Parameters<HashComputeParams>,
+    working_dir: &Path,
+) -> Result<CallToolResult, String> {
     let params = params.0;
     let algorithm = params.algorithm.unwrap_or_else(|| "sha256".to_string());
 
     let result = if params.input.starts_with("file:") {
         let file_path = &params.input[5..];
-        compute_file_hash(file_path, &algorithm).await?
+        compute_file_hash(file_path, &algorithm, working_dir).await?
     } else {
-        compute_string_hash(&params.input, &algorithm)?
+        compute_hash(params.input.as_bytes(), &algorithm)?
     };
 
     Ok(CallToolResult::success(vec![rmcp::model::Content::text(
@@ -31,63 +36,50 @@ pub async fn hash_compute(params: Parameters<HashComputeParams>) -> Result<CallT
     )]))
 }
 
-fn compute_string_hash(input: &str, algorithm: &str) -> Result<String, String> {
+/// Compute hash of byte data using the specified algorithm
+fn compute_hash(data: &[u8], algorithm: &str) -> Result<String, String> {
     match algorithm.to_lowercase().as_str() {
         "md5" => {
-            let hash = md5::compute(input.as_bytes());
+            let hash = md5::compute(data);
             Ok(format!("{:x}", hash))
         }
         "sha1" => {
-            // Using SHA256 as fallback for SHA1
-            let mut hasher = Sha256::new();
-            hasher.update(input.as_bytes());
-            let result = hasher.finalize();
-            Ok(format!("{:x}", result))
+            let mut hasher = Sha1::new();
+            hasher.update(data);
+            Ok(format!("{:x}", hasher.finalize()))
         }
         "sha256" => {
             let mut hasher = Sha256::new();
-            hasher.update(input.as_bytes());
-            let result = hasher.finalize();
-            Ok(format!("{:x}", result))
+            hasher.update(data);
+            Ok(format!("{:x}", hasher.finalize()))
         }
         _ => Err(format!("Unsupported algorithm: {}", algorithm)),
     }
 }
 
-async fn compute_file_hash(file_path: &str, algorithm: &str) -> Result<String, String> {
+async fn compute_file_hash(
+    file_path: &str,
+    algorithm: &str,
+    working_dir: &Path,
+) -> Result<String, String> {
     let path = Path::new(file_path);
 
-    if !path.exists() {
+    // Security check: ensure path is within working directory
+    let canonical_path = ensure_path_within_working_dir(path, working_dir)?;
+
+    if !canonical_path.exists() {
         return Err(format!("File '{}' does not exist", file_path));
     }
 
-    if !path.is_file() {
+    if !canonical_path.is_file() {
         return Err(format!("Path '{}' is not a file", file_path));
     }
 
-    let data = tokio::fs::read(path)
+    let data = tokio::fs::read(&canonical_path)
         .await
         .map_err(|e| format!("Failed to read file: {}", e))?;
 
-    match algorithm.to_lowercase().as_str() {
-        "md5" => {
-            let hash = md5::compute(&data);
-            Ok(format!("{:x}", hash))
-        }
-        "sha1" => {
-            let mut hasher = Sha256::new();
-            hasher.update(&data);
-            let result = hasher.finalize();
-            Ok(format!("{:x}", result))
-        }
-        "sha256" => {
-            let mut hasher = Sha256::new();
-            hasher.update(&data);
-            let result = hasher.finalize();
-            Ok(format!("{:x}", result))
-        }
-        _ => Err(format!("Unsupported algorithm: {}", algorithm)),
-    }
+    compute_hash(&data, algorithm)
 }
 
 #[cfg(test)]
@@ -98,12 +90,13 @@ mod tests {
 
     #[tokio::test]
     async fn test_hash_string() {
+        let temp_dir = TempDir::new().unwrap();
         let params = HashComputeParams {
             input: "Hello, World!".to_string(),
             algorithm: Some("sha256".to_string()),
         };
 
-        let result = hash_compute(Parameters(params)).await;
+        let result = hash_compute(Parameters(params), temp_dir.path()).await;
         assert!(result.is_ok());
     }
 
@@ -118,18 +111,19 @@ mod tests {
             algorithm: Some("md5".to_string()),
         };
 
-        let result = hash_compute(Parameters(params)).await;
+        let result = hash_compute(Parameters(params), temp_dir.path()).await;
         assert!(result.is_ok());
     }
 
     #[tokio::test]
     async fn test_hash_invalid_algorithm() {
+        let temp_dir = TempDir::new().unwrap();
         let params = HashComputeParams {
             input: "test".to_string(),
             algorithm: Some("invalid".to_string()),
         };
 
-        let result = hash_compute(Parameters(params)).await;
+        let result = hash_compute(Parameters(params), temp_dir.path()).await;
         assert!(result.is_err());
     }
 }

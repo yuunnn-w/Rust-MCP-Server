@@ -32,6 +32,8 @@ pub fn create_router(state: Arc<ServerState>) -> Router {
         .route("/api/mcp/restart", post(handlers::restart_mcp))
         .route("/api/events", get(handlers::sse_handler))
         .route("/api/search", get(handlers::search_tools))
+        .route("/api/system-metrics", get(handlers::get_system_metrics))
+        .route("/api/version", get(handlers::get_version))
         // Static files
         .route("/", get(index_handler))
         .route("/{*path}", get(static_handler))

@@ -26,7 +26,7 @@ pub async fn system_info() -> Result<CallToolResult, String> {
     );
 
     // Wait a bit for CPU usage measurement
-    std::thread::sleep(std::time::Duration::from_millis(500));
+    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
     system.refresh_cpu_all();
     system.refresh_memory();
 

@@ -4,7 +4,7 @@
 
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
-│                        Rust MCP Server v0.1.0                       │
+│                        Rust MCP Server v0.2.0                       │
 ├─────────────────────────────────────────────────────────────────────┤
 │  ┌─────────────────┐  ┌─────────────────┐  ┌─────────────────────┐  │
 │  │   WebUI (Axum)  │  │  MCP Service    │  │   Tool Registry     │  │
@@ -15,11 +15,15 @@
 │  │  └───────────┘  │  │  │ Transport│   │  │  │ file_write    │  │  │
 │  │  ┌───────────┐  │  │  └──────────┘   │  │  │ execute_cmd   │  │  │
 │  │  │ REST API  │  │  │                 │  │  │ calculator    │  │  │
-│  │  │ /api/*    │  │  │                 │  │  │ ... (18 tools)│  │  │
+│  │  │ /api/*    │  │  │                 │  │  │ ... (20 tools)│  │  │
 │  │  └───────────┘  │  │                 │  │  └───────────────┘  │  │
 │  │  ┌───────────┐  │  │                 │  │                     │  │
 │  │  │ SSE       │  │  │                 │  │                     │  │
 │  │  │ /events   │  │  │                 │  │                     │  │
+│  │  └───────────┘  │  │                 │  │                     │  │
+│  │  ┌───────────┐  │  │                 │  │                     │  │
+│  │  │ System    │  │  │                 │  │                     │  │
+│  │  │ Metrics   │  │  │                 │  │                     │  │
 │  │  └───────────┘  │  │                 │  │                     │  │
 │  └─────────────────┘  └─────────────────┘  └─────────────────────┘  │
 ├─────────────────────────────────────────────────────────────────────┤
@@ -51,9 +55,13 @@ The WebUI provides a modern control panel for managing the MCP server.
 - `GET /api/tool/{name}/detail` - Get tool details
 - `POST /api/tool/{name}/enable` - Enable/disable tool
 - `GET /api/server-status` - Server runtime status
+- `GET /api/system-metrics` - Get real-time CPU, memory, and load metrics
+- `GET /api/version` - Get server version information
 - `GET /api/config` - Get configuration
 - `PUT /api/config` - Update configuration
-- `POST /api/mcp/{start|stop|restart}` - MCP service control
+- `POST /api/mcp/start` - Start MCP service
+- `POST /api/mcp/stop` - Stop MCP service
+- `POST /api/mcp/restart` - Restart MCP service
 
 **Default Bind Address**: `127.0.0.1:2233`
 
@@ -74,19 +82,26 @@ Implements the Model Context Protocol using the `rmcp` crate.
 
 ### Tool Registry
 
-18 built-in tools organized by category:
+20 built-in tools organized by category:
 
-#### File Operations (6 tools)
+#### File Operations (8 tools)
 | Tool | Description | Dangerous |
 |------|-------------|-----------|
-| `dir_list` | List directory contents with tree structure (max depth 3) | No |
+| `dir_list` | List directory contents with tree structure (max depth 5) | No |
 | `file_read` | Read text file content with line range support | No |
-| `file_search` | Search for keyword in file or directory (max depth 3) | No |
+| `file_search` | Search for keyword in file or directory (max depth 5) | No |
 | `file_write` | Write content to file (create/append/overwrite) | Yes |
-| `file_copy` | Copy a file to a new location | Yes |
-| `file_move` | Move a file to a new location | Yes |
-| `file_delete` | Delete a file | Yes |
-| `file_rename` | Rename a file | Yes |
+| `file_ops` | Copy, move, delete, or rename files | Yes |
+| `file_edit` | Multi-mode file editing (string_replace, line_replace, insert, delete, patch) | Yes |
+| `file_stat` | Get file/directory metadata (size, permissions, timestamps) | No |
+| `path_exists` | Lightweight path existence check | No |
+
+#### Query & Environment Tools (3 tools)
+| Tool | Description | Dangerous |
+|------|-------------|-----------|
+| `json_query` | Query a JSON file using JSON Pointer syntax | No |
+| `git_ops` | Run git commands in a repository | No |
+| `env_get` | Get the value of an environment variable | No |
 
 #### System Tools (3 tools)
 | Tool | Description | Dangerous |
@@ -95,20 +110,39 @@ Implements the Model Context Protocol using the `rmcp` crate.
 | `system_info` | Get system information | No |
 | `execute_command` | Execute shell command in specified directory | Yes |
 
-#### Utility Tools (5 tools)
+#### Utility Tools (4 tools)
 | Tool | Description | Dangerous |
 |------|-------------|-----------|
 | `calculator` | Calculate mathematical expressions | No |
 | `datetime` | Get current date and time in China format | No |
-| `base64_encode` | Encode string to base64 | No |
-| `base64_decode` | Decode base64 to string | No |
+| `base64_codec` | Encode or decode base64 strings | No |
 | `hash_compute` | Compute hash (MD5, SHA1, SHA256) of string or file | No |
 
 #### Network & Image Tools (2 tools)
 | Tool | Description | Dangerous |
 |------|-------------|-----------|
 | `http_request` | Make HTTP GET or POST requests | No |
-| `image_read` | Read image file and return base64 encoded data | No |
+| `image_read` | Read image file and return MCP-standard ImageContent + TextContent metadata | No |
+
+### Resources
+
+The server exposes the working directory as an MCP resource (`file:///`). Clients can:
+- **List resources**: Get the working directory entry with `uri`, `name`, and `description`
+- **Read resources**: Fetch directory listings or file contents via `file:///{relative_path}`
+
+Resource contents are returned as `TextResourceContents` with MIME type `text/plain`.
+
+### Prompts
+
+3 built-in prompts available for client use:
+
+| Prompt | Description |
+|--------|-------------|
+| `system_diagnosis` | Guide for analyzing system information and identifying issues |
+| `file_analysis` | Guide for analyzing code files and directory structures |
+| `security_checklist` | Checklist to review before executing dangerous operations |
+
+Prompts are retrieved via `prompts/get` and return a list of `PromptMessage` with `User` role.
 
 ### ServerState
 
@@ -199,12 +233,11 @@ Output Truncation (100KB limit)
 
 **Default Disabled Tools:**
 ```
-file_write,file_copy,file_move,file_delete,file_rename,
-http_request,datetime,image_read,execute_command,process_list,
-base64_encode,base64_decode,hash_compute,system_info
+file_write,file_ops,file_edit,http_request,datetime,
+execute_command,process_list,base64_codec,hash_compute,system_info
 ```
 
-Only `calculator`, `dir_list`, `file_read`, `file_search` are enabled by default.
+The following 10 tools are enabled by default: `calculator`, `dir_list`, `file_read`, `file_search`, `image_read`, `file_stat`, `path_exists`, `json_query`, `git_ops`, `env_get`.
 
 ## Technology Stack
 
@@ -216,6 +249,7 @@ Only `calculator`, `dir_list`, `file_read`, `file_search` are enabled by default
 - **CLI Parsing**: clap
 - **Concurrency**: tokio::sync (Semaphore, RwLock)
 - **Collections**: dashmap (concurrent HashMap)
+- **System Metrics**: sysinfo (CPU, memory, process monitoring)
 
 ---
 

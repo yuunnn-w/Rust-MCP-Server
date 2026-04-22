@@ -62,7 +62,7 @@
 - `name`: 工具名称
 - `total_calls`: 启动以来的总调用次数
 - `recent_calls_15min`: 最近15分钟的调用次数
-- `stats_history`: 每15分钟间隔的调用次数数组（最近2小时）
+- `stats_history`: 每5分钟间隔的调用次数数组（最近2小时）
 - `recent_call_times`: 最近调用的时间戳
 
 #### GET /api/tool/{name}/detail
@@ -93,7 +93,8 @@
 ```json
 {
   "success": true,
-  "message": "Tool 'file_read' disabled"
+  "tool": "file_read",
+  "enabled": false
 }
 ```
 
@@ -134,9 +135,7 @@
   "mcp_port": 3344,
   "max_concurrency": 10,
   "working_dir": ".",
-  "log_level": "info",
-  "disable_webui": false,
-  "disable_tools": ["execute_command", "file_write"]
+  "log_level": "info"
 }
 ```
 
@@ -154,16 +153,52 @@
 ```json
 {
   "success": true,
-  "config": {
-    "max_concurrency": 20,
-    ...
-  }
+  "message": "配置更新成功",
+  "changes": ["max_concurrency"],
+  "restart_required": false
 }
 ```
 
 **可更新字段：**
-- `max_concurrency`
-- `log_level`
+- `webui_host`
+- `webui_port`
+- `mcp_transport` (`"http"` 或 `"sse"`)
+- `mcp_host`
+- `mcp_port`
+- `max_concurrency`（范围：1-1000）
+- `working_dir`
+- `log_level` (`"trace"`、`"debug"`、`"info"`、`"warn"`、`"error"`)
+
+**注意：** 修改 `mcp_transport`、`mcp_host`、`mcp_port`、`webui_host`、`webui_port`、`log_level` 或 `working_dir` 后需要重启服务器才能完全生效。当涉及这些字段时，响应将包含 `restart_required: true`。
+
+### MCP 服务控制
+
+#### GET /api/system-metrics
+获取实时系统资源使用情况。
+
+**响应：**
+```json
+{
+  "cpu_percent": 12.5,
+  "memory_total": 17179869184,
+  "memory_used": 8589934592,
+  "memory_percent": 50.0,
+  "cpu_cores": 8,
+  "uptime_seconds": 3600,
+  "load_average": [0.5, 0.3, 0.2],
+  "process_count": 245
+}
+```
+
+**字段说明：**
+- `cpu_percent`: 全局 CPU 使用率百分比（0-100）
+- `memory_total`: 总物理内存（字节）
+- `memory_used`: 已使用物理内存（字节）
+- `memory_percent`: 内存使用率百分比（0-100）
+- `cpu_cores`: 逻辑 CPU 核心数
+- `uptime_seconds`: 系统运行时间（秒）
+- `load_average`: 1分钟、5分钟、15分钟平均负载（Windows 上可能为零）
+- `process_count`: 运行中的进程总数
 
 ### MCP 服务控制
 
@@ -207,14 +242,23 @@
 
 **响应：**
 ```json
+["file_read", "file_search", "dir_list"]
+```
+
+### 版本信息
+
+#### GET /api/version
+获取服务器版本及元数据。
+
+**响应：**
+```json
 {
-  "tools": [
-    {
-      "name": "file_read",
-      "description": "Read text file content with line range support",
-      "enabled": true
-    }
-  ]
+  "name": "rust-mcp-server",
+  "version": "0.2.0",
+  "description": "A high-performance MCP server with WebUI control panel",
+  "authors": "MCP Server Team",
+  "repository": "https://github.com/yuunnn-w/Rust-MCP-Server",
+  "license": "GPL-3.0"
 }
 ```
 
@@ -304,15 +348,91 @@ MCP 服务通过 HTTP 或 SSE 使用 JSON-RPC 2.0。
     "tools": [
       {
         "name": "file_read",
-        "description": "Read text file content with line range support",
+        "description": "读取文本文件内容，支持行范围",
         "inputSchema": {
           "type": "object",
           "properties": {
             "path": {"type": "string"},
             "start_line": {"type": "integer"},
-            "end_line": {"type": "integer"}
+            "end_line": {"type": "integer"},
+            "highlight_line": {"type": "integer"}
           },
           "required": ["path"]
+        }
+      },
+      {
+        "name": "file_edit",
+        "description": "使用 string_replace、line_replace、insert、delete 或 patch 模式编辑文件",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "path": {"type": "string"},
+            "mode": {"type": "string"},
+            "old_string": {"type": "string"},
+            "new_string": {"type": "string"},
+            "start_line": {"type": "integer"},
+            "end_line": {"type": "integer"},
+            "patch": {"type": "string"}
+          },
+          "required": ["path"]
+        }
+      },
+      {
+        "name": "json_query",
+        "description": "使用 JSON Pointer 语法查询 JSON 文件",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "path": {"type": "string"},
+            "query": {"type": "string"}
+          },
+          "required": ["path", "query"]
+        }
+      },
+      {
+        "name": "file_stat",
+        "description": "获取文件或目录的元数据",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "path": {"type": "string"}
+          },
+          "required": ["path"]
+        }
+      },
+      {
+        "name": "path_exists",
+        "description": "检查路径是否存在并返回其类型",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "path": {"type": "string"}
+          },
+          "required": ["path"]
+        }
+      },
+      {
+        "name": "git_ops",
+        "description": "在仓库中运行 git 命令",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "action": {"type": "string"},
+            "repo_path": {"type": "string"},
+            "options": {"type": "array", "items": {"type": "string"}}
+          },
+          "required": ["action"]
+        }
+      },
+      {
+        "name": "env_get",
+        "description": "获取环境变量的值",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "name": {"type": "string"}
+          },
+          "required": ["name"]
         }
       }
     ]
@@ -339,7 +459,7 @@ MCP 服务通过 HTTP 或 SSE 使用 JSON-RPC 2.0。
 }
 ```
 
-成功响应：
+成功响应（文本工具）：
 ```json
 {
   "jsonrpc": "2.0",
@@ -354,6 +474,29 @@ MCP 服务通过 HTTP 或 SSE 使用 JSON-RPC 2.0。
   }
 }
 ```
+
+**image_read 响应（full 模式）：**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 3,
+  "result": {
+    "content": [
+      {
+        "type": "image",
+        "data": "iVBORw0KGgoAAAANSUhEUgAA...",
+        "mimeType": "image/png"
+      },
+      {
+        "type": "text",
+        "text": "Image: screenshot.png, Dimensions: 1920x1080, Size: 1.2 MB, Type: image/png"
+      }
+    ]
+  }
+}
+```
+
+第一个 content 项为标准 MCP `ImageContent`，包含原始 base64 数据和 MIME 类型（无 JSON 包装），使视觉模型客户端能将图片送入编码器处理。第二个项为人类可读的元数据文本。
 
 错误响应：
 ```json

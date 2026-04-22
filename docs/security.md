@@ -199,29 +199,31 @@ Prevents memory exhaustion from large command outputs.
 
 ## Tool Classification
 
-### Safe Tools (11)
+### Safe Tools (15)
 These tools are safe to enable by default:
 - `calculator` - Mathematical calculations
 - `dir_list` - Directory listing
 - `file_read` - File reading
 - `file_search` - File content search
 - `datetime` - Date/time
-- `base64_encode` - Base64 encoding
-- `base64_decode` - Base64 decoding
+- `base64_codec` - Base64 encoding/decoding
 - `hash_compute` - Hash calculation
 - `http_request` - HTTP requests
 - `image_read` - Image reading
 - `system_info` - System information
+- `file_stat` - File/directory metadata
+- `path_exists` - Path existence check
+- `json_query` - JSON file querying
+- `env_get` - Environment variable reading
+- `git_ops` - Git repository read-only operations
+- `process_list` - System process listing
 
-### Dangerous Tools (7)
+### Dangerous Tools (4)
 These tools require caution:
 - `file_write` - File writing (can overwrite data)
-- `file_copy` - File copying
-- `file_move` - File moving
-- `file_delete` - File deletion
-- `file_rename` - File renaming
+- `file_ops` - Copy, move, delete, or rename files
+- `file_edit` - Multi-mode file editing (can modify files)
 - `execute_command` - Shell command execution
-- `process_list` - Process listing (information disclosure)
 
 ## Best Practices
 
@@ -238,7 +240,7 @@ These tools require caution:
 2. **Default Tool Policy**
    ```bash
    # Start with minimal tools
-   ./rust-mcp-server --disable-tools file_write,file_copy,file_move,file_delete,file_rename,execute_command,http_request
+   ./rust-mcp-server --disable-tools file_write,file_ops,file_edit,execute_command,http_request
    ```
    - Only enable tools as needed
    - Enable `execute_command` only in trusted environments
@@ -302,7 +304,7 @@ Before deploying to production:
 1. **Immediate Actions**
    ```bash
    # Stop MCP service via WebUI or API
-curl -X POST http://127.0.0.1:2233/api/mcp/stop
+  curl -X POST http://127.0.0.1:2233/api/mcp/stop
    ```
 
 2. **Review Logs**

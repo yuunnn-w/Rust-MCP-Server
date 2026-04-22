@@ -58,15 +58,16 @@ Claude Desktop 配置示例：
 
 ### 仪表板概览
 
-WebUI 提供了全面的控制面板：
-- **工具网格**: 查看和管理全部 18 个工具
-- **状态栏**: 监控并发调用和服务器状态
-- **统计面板**: 查看工具使用图表（Chart.js）
-- **实时更新**: 基于 SSE 的实时状态更新
+WebUI 提供 Cyberpunk AI Command Center 控制面板：
+- **HUD 头部**: 实时系统指标（CPU 环形图、内存条形图、总调用数、并发数）
+- **工具网格**: 查看和管理全部工具，支持 3D 悬浮倾斜效果和霓虹边框
+- **终端日志面板**: 底部面板实时流式显示 SSE 事件，带彩色日志级别（INFO/WARN/ERROR）
+- **实时更新**: 基于 SSE 的实时状态更新（工具调用、并发数、MCP 服务状态）
+- **动态背景**: Canvas 绘制的透视网格和浮动粒子网络
 
 ### 启用/禁用工具
 
-**重要提示:** 默认情况下，只有 `calculator`、`dir_list`、`file_read` 和 `file_search` 为安全起见是启用的。
+**重要提示:** 默认情况下，以下 10 个工具为安全起见是启用的：`calculator`、`dir_list`、`file_read`、`file_search`、`image_read`、`file_stat`、`path_exists`、`json_query`、`git_ops`、`env_get`。
 
 1. 打开 WebUI 访问 `http://127.0.0.1:2233`
 2. 在工具网格中找到对应工具卡片
@@ -75,10 +76,10 @@ WebUI 提供了全面的控制面板：
 
 ### 查看工具统计
 
-点击任意工具卡片上的"详情"按钮查看：
+点击任意工具卡片查看：
 - 总调用次数
 - 最近调用（15分钟内）
-- 使用图表（最近2小时，15分钟间隔）
+- 使用图表（最近2小时，5分钟间隔）
 - 最近调用时间戳
 - 工具描述和使用说明
 
@@ -98,13 +99,21 @@ WebUI 提供了全面的控制面板：
 
 **参数：**
 - `path` (string): 目录路径（默认：当前目录）
-- `max_depth` (number, 可选): 最大递归深度（默认：3，最大：5）
+- `max_depth` (number, 可选): 最大递归深度（默认：2，最大：5）
+- `include_hidden` (boolean, 可选): 包含隐藏文件（默认：false）
+- `pattern` (string, 可选): Glob 过滤模式，例如 `"*.rs"`
+- `brief` (boolean, 可选): 精简模式 — 仅返回名称、路径、是否为目录（默认：true）
+- `sort_by` (string, 可选): 排序方式：`"name"`（默认）、`"type"`、`"size"`、`"modified"`
+- `flatten` (boolean, 可选): 扁平模式 — 返回一维数组而非嵌套树（默认：false）
 
 **示例：**
 ```json
 {
   "path": "/project/src",
-  "max_depth": 2
+  "max_depth": 2,
+  "pattern": "*.rs",
+  "brief": true,
+  "sort_by": "name"
 }
 ```
 
@@ -114,20 +123,25 @@ WebUI 提供了全面的控制面板：
 **参数：**
 - `path` (string): 文件路径
 - `start_line` (number, 可选): 起始行（从0开始，默认：0）
-- `end_line` (number, 可选): 结束行（默认：100）
+- `end_line` (number, 可选): 结束行（默认：500）
+- `offset_chars` (number, 可选): 字符偏移量，作为 start_line 的替代
+- `max_chars` (number, 可选): 最大返回字符数（默认：15000）
+- `line_numbers` (boolean, 可选): 每行前添加行号（默认：true）
+- `highlight_line` (number, 可选): 高亮指定行，在输出中用 `>>> ` 标记
 
 **特性：**
-- 每次读取限制 10KB 字符
-- 超出自动截断并提示
+- 每次读取限制 15KB 字符（可通过 `max_chars` 调整）
+- 超出自动截断并提供精确的继续读取提示
 - 返回总行数
-- 提供继续读取的提示
+- 行号前缀便于引用
 
 **示例：**
 ```json
 {
   "path": "config.json",
   "start_line": 0,
-  "end_line": 50
+  "end_line": 500,
+  "line_numbers": true
 }
 ```
 
@@ -154,12 +168,18 @@ WebUI 提供了全面的控制面板：
 **参数：**
 - `path` (string): 文件或目录路径
 - `keyword` (string): 搜索关键词
-- `max_depth` (number, 可选): 最大递归深度（默认：3）
+- `file_pattern` (string, 可选): Glob 文件过滤模式，例如 `"*.rs"`
+- `use_regex` (boolean, 可选): 使用正则匹配（默认：false）
+- `max_results` (number, 可选): 最大返回匹配结果数（默认：20）
+- `context_lines` (number, 可选): 匹配行周围的上下文行数（默认：3）
+- `brief` (boolean, 可选): 精简模式 — 仅返回文件路径和行号（默认：false）
+- `output_format` (string, 可选): 输出格式：`"detailed"`（默认，完整片段）、`"compact"`（`file:line:matched_text`）、`"location"`（仅 `file:line`）
 
 **特性：**
-- 递归目录搜索
-- 返回文件路径和行号
-- 跳过二进制文件（UTF-8 检测）
+- 递归目录搜索（最大深度：5）
+- 返回匹配内容片段及周围上下文
+- 支持正则和字面量关键词
+- 跳过二进制文件和黑名单目录
 - 提示未搜索的深层目录
 
 **示例：**
@@ -167,7 +187,81 @@ WebUI 提供了全面的控制面板：
 {
   "path": "/project/src",
   "keyword": "TODO",
-  "max_depth": 3
+  "file_pattern": "*.rs",
+  "context_lines": 3,
+  "max_results": 10
+}
+```
+
+#### file_edit
+多模式文件编辑 — 支持字符串替换、行级操作和统一差异补丁（无需重写整个文件的安全编辑方式）。
+
+**参数：**
+- `path` (string): 要编辑的文件路径
+- `mode` (string, 可选): `"string_replace"`（默认）、`"line_replace"`、`"insert"`、`"delete"`、`"patch"`
+
+**string_replace 模式：**
+- `old_string` (string): 要查找的字符串（精确匹配，可跨多行）
+- `new_string` (string): 替换字符串
+- `occurrence` (number, 可选): 替换第几次出现 — `1`=第一次（默认），`2`=第二次，`0`=替换所有
+
+**line_replace / insert / delete 模式：**
+- `start_line` (number): 起始行（1-based，包含）
+- `end_line` (number): 结束行（1-based，包含）。insert 模式不使用。
+- `new_string` (string): 替换或插入的内容
+
+**patch 模式：**
+- `patch` (string): 统一差异补丁字符串
+
+**特性：**
+- `string_replace`: 精确字符串匹配，支持多行
+- `line_replace`: 按行号替换 — LLM 无需输出旧内容
+- `insert`: 在指定行前插入内容
+- `delete`: 删除指定范围的行
+- `patch`: 应用标准统一差异补丁，支持多位置复杂修改
+- 所有模式均返回替换摘要及预览
+
+**示例：**
+```json
+// 字符串替换
+{
+  "path": "src/main.rs",
+  "mode": "string_replace",
+  "old_string": "fn main() {",
+  "new_string": "fn main() -> Result<(), Box<dyn std::error::Error>> {",
+  "occurrence": 1
+}
+
+// 行替换（无需 old_string！）
+{
+  "path": "src/main.rs",
+  "mode": "line_replace",
+  "start_line": 10,
+  "end_line": 15,
+  "new_string": "    let x = 42;\n    println!(\"{}\", x);"
+}
+
+// 在第 5 行前插入
+{
+  "path": "src/main.rs",
+  "mode": "insert",
+  "start_line": 5,
+  "new_string": "use std::fs;"
+}
+
+// 删除第 8-12 行
+{
+  "path": "src/main.rs",
+  "mode": "delete",
+  "start_line": 8,
+  "end_line": 12
+}
+
+// 统一差异补丁
+{
+  "path": "src/main.rs",
+  "mode": "patch",
+  "patch": "@@ -10,3 +10,3 @@\n fn old() {\n-    let x = 1;\n+    let x = 42;\n }"
 }
 ```
 
@@ -181,6 +275,7 @@ WebUI 提供了全面的控制面板：
 - `cwd` (string, 可选): 工作目录（默认：当前目录）
 - `timeout` (number, 可选): 超时秒数（默认：30，最大：300）
 - `env` (object, 可选): 环境变量（键值对）
+- `shell` (string, 可选): 显式指定解释器 — `"cmd"`、`"powershell"`、`"pwsh"`、`"sh"`、`"bash"`、`"zsh"`（默认按平台自动选择）
 
 **安全特性：**
 - 危险命令需要两步确认
@@ -192,7 +287,8 @@ WebUI 提供了全面的控制面板：
 {
   "command": "ls -la",
   "cwd": "/home/user",
-  "timeout": 30
+  "timeout": 30,
+  "shell": "bash"
 }
 ```
 
@@ -238,21 +334,32 @@ WebUI 提供了全面的控制面板：
 - `method` (string): "GET" 或 "POST"
 - `headers` (object, 可选): HTTP 请求头
 - `body` (string, 可选): 请求体
+- `timeout` (number, 可选): 超时秒数（默认：30）
+- `extract_json_path` (string, 可选): JSON Pointer 路径，从 JSON 响应中提取数据，例如 `"/data/0/name"`
+- `include_response_headers` (boolean, 可选): 在输出中包含响应头（默认：false）
+- `max_response_chars` (number, 可选): 最大响应体字符数（默认：15000）
 
 **示例：**
 ```json
 {
   "url": "https://api.example.com/data",
-  "method": "GET"
+  "method": "GET",
+  "extract_json_path": "/data/0/name",
+  "max_response_chars": 5000
 }
 ```
 
-#### base64_encode / base64_decode
-Base64 编码/解码。
+#### base64_codec
+Base64 编码或解码。
+
+**参数：**
+- `operation` (string): `"encode"` 或 `"decode"`
+- `input` (string): 要编码的字符串，或要解码的 base64 字符串
 
 **示例：**
 ```json
 {
+  "operation": "encode",
   "input": "Hello, World!"
 }
 ```
@@ -261,7 +368,7 @@ Base64 编码/解码。
 计算字符串或文件的哈希值。
 
 **参数：**
-- `input` (string): 要哈希的字符串，或以 `@` 开头的文件路径
+- `input` (string): 要哈希的字符串，或以 `file:` 开头的文件路径
 - `algorithm` (string): "MD5"、"SHA1" 或 "SHA256"
 
 **示例：**
@@ -272,17 +379,113 @@ Base64 编码/解码。
 }
 ```
 
+#### file_stat
+获取文件或目录的元数据。
+
+**参数：**
+- `path` (string): 文件或目录路径
+
+**返回：**
+- `name`、`path`、`exists`
+- `file_type`: `"file"`、`"directory"`、`"symlink"` 或 `"unknown"`
+- `size`: 字节大小
+- `size_human`: 人类可读的大小字符串
+- `readable`、`writable`、`executable`: 权限布尔值
+- `modified`、`created`、`accessed`: 时间戳字符串
+- `is_symlink`: 是否为符号链接
+
+**示例：**
+```json
+{
+  "path": "src/main.rs"
+}
+```
+
+#### path_exists
+轻量级路径存在性检查。
+
+**参数：**
+- `path` (string): 要检查的路径
+
+**返回：**
+- `exists` (boolean)
+- `path_type`: `"file"`、`"dir"`、`"symlink"` 或 `"none"`
+
+**示例：**
+```json
+{
+  "path": "src/main.rs"
+}
+```
+
+#### json_query
+使用 JSON Pointer 语法直接查询 JSON 文件。
+
+**参数：**
+- `path` (string): JSON 文件路径
+- `query` (string): JSON Pointer 路径，例如 `"/data/0/name"`
+- `max_chars` (number, 可选): 最大返回字符数（默认：15000）
+
+**返回：**
+- `found` (boolean)
+- `result`: 查询到的值（格式化 JSON）
+- `result_type`: 类型信息（例如 `"object{5}"`、`"array[3]"`、`"string"`）
+
+**示例：**
+```json
+{
+  "path": "config.json",
+  "query": "/database/host"
+}
+```
+
+#### git_ops
+在仓库中运行 git 命令。
+
+**参数：**
+- `action` (string): `"status"`、`"diff"`、`"log"`、`"branch"` 或 `"show"`
+- `repo_path` (string, 可选): 仓库路径（默认：工作目录）
+- `options` (string 数组, 可选): 额外的 git 参数
+
+**示例：**
+```json
+{
+  "action": "log",
+  "options": ["--oneline", "-n", "10"]
+}
+```
+
+#### env_get
+获取环境变量的值。
+
+**参数：**
+- `name` (string): 环境变量名称
+
+**返回：**
+- `name`、`value`、`is_set` (boolean)
+
+**示例：**
+```json
+{
+  "name": "PATH"
+}
+```
+
 ### 图像工具类
 
 #### image_read
-读取图像文件并返回 base64 编码数据。
+读取图像文件并返回标准 MCP 图像内容或元数据。
 
 **参数：**
 - `path` (string): 图像文件路径
+- `mode` (string, 可选): `"full"`（默认）返回图像数据；`"metadata"` 仅返回尺寸和类型
 
-**返回：**
-- Base64 编码的图像数据
-- 图像格式（png、jpeg 等）
+**返回（full 模式）：**
+- MCP `ImageContent` 包含原始 base64 数据和 MIME 类型（供视觉模型编码器使用）
+- 人类可读的 `TextContent` 包含文件名、尺寸、大小和格式
+
+**返回（metadata 模式）：**
+- JSON 文本包含图像格式、尺寸和大小
 
 ## 配置说明
 
@@ -303,6 +506,8 @@ Base64 编码/解码。
       --log-level <级别>               日志级别：trace、debug、info、warn、error [默认：info]
       --disable-webui                  禁用 WebUI 控制面板
       --allow-dangerous-commands <ID>  允许的危险命令 ID（1-20）
+      --allowed-hosts <主机列表>       自定义允许的 Host 头，用于 DNS 重绑定保护（逗号分隔）
+      --disable-allowed-hosts          禁用 allowed_hosts 检查（不推荐公网部署使用）
   -h, --help                           显示帮助
   -V, --version                        显示版本
 ```
@@ -316,6 +521,7 @@ export MCP_WEBUI_PORT=8080
 export MCP_MAX_CONCURRENCY=20
 export MCP_LOG_LEVEL=debug
 export MCP_DISABLE_TOOLS="execute_command,process_list"
+export MCP_ALLOWED_HOSTS="192.168.1.100,example.com"
 ./rust-mcp-server
 ```
 
@@ -438,6 +644,20 @@ curl -X POST http://127.0.0.1:3344 \
   -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'
 ```
 
+**403 Forbidden: Host header is not allowed**
+
+此错误表示 MCP 服务器因 DNS 重绑定保护而拒绝了请求（rmcp v1.5.0+）。
+
+**如果使用 `--mcp-host 0.0.0.0`：** 服务器会自动检测本机网卡 IP。若自动检测失败，可使用以下方式：
+
+```bash
+# 选项 1：显式指定允许的 Host
+./rust-mcp-server --mcp-host 0.0.0.0 --allowed-hosts 192.168.1.100
+
+# 选项 2：禁用检查（不推荐公网部署使用）
+./rust-mcp-server --mcp-host 0.0.0.0 --disable-allowed-hosts
+```
+
 ### 性能问题
 
 **增加并发数：**
@@ -447,6 +667,12 @@ curl -X POST http://127.0.0.1:3344 \
 
 **监控资源使用：**
 ```bash
+# 通过 WebUI HUD
+打开 http://127.0.0.1:2233 查看头部系统指标
+
+# 通过 API
+curl http://127.0.0.1:2233/api/system-metrics
+
 # Linux/macOS
 top -p $(pgrep rust-mcp-server)
 

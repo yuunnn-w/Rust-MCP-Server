@@ -6,14 +6,14 @@ use std::path::PathBuf;
 #[command(
     name = "rust-mcp-server",
     author = "MCP Server Team",
-    version = "0.1.0",
+    version = "0.2.0",
     about = "A high-performance MCP server with WebUI control panel / 高性能 MCP 服务器，带 WebUI 控制面板",
     long_about = "Rust MCP Server - A high-performance Model Context Protocol server\n\
                     Rust MCP 服务器 - 高性能模型上下文协议服务器\n\n\
                     Features / 功能特性:\n\
                     - HTTP/SSE transport modes / HTTP/SSE 传输模式\n\
                     - WebUI control panel for tool management / WebUI 控制面板管理工具\n\
-                    - 17 built-in tools (file ops, calculator, HTTP, etc.) / 17个内置工具（文件操作、计算器、HTTP等）\n\
+                    - 20 built-in tools (file ops, calculator, HTTP, etc.) / 20个内置工具（文件操作、计算器、HTTP等）\n\
                     - Real-time tool call statistics / 实时工具调用统计\n\
                     - Tool enable/disable control / 工具启用/禁用控制"
 )]
@@ -44,11 +44,11 @@ pub struct AppConfig {
     pub max_concurrency: usize,
 
     /// Disabled tools, comma-separated (禁用的工具列表，逗号分隔)
-    /// Default: calculator, dir_list, file_read, file_search are enabled (默认启用: calculator, dir_list, file_read, file_search)
+    /// Default enabled: calculator, dir_list, file_read, file_search, image_read, file_stat, path_exists, json_query, git_ops, env_get
     #[arg(
         long,
         value_delimiter = ',',
-        default_value = "file_write,file_copy,file_move,file_delete,file_rename,http_request,datetime,image_read,execute_command,process_list,base64_encode,base64_decode,hash_compute,system_info",
+        default_value = "file_write,file_ops,file_edit,http_request,datetime,execute_command,process_list,base64_codec,hash_compute,system_info",
         env = "MCP_DISABLE_TOOLS"
     )]
     #[serde(default = "default_disable_tools")]
@@ -82,23 +82,31 @@ pub struct AppConfig {
     )]
     #[serde(default)]
     pub allow_dangerous_commands: Vec<u8>,
+
+    /// Custom allowed hosts for DNS rebinding protection (覆盖自动推断的 allowed_hosts)
+    /// 自定义允许的 Host 头列表，用于 DNS 重绑定保护
+    #[arg(long, value_delimiter = ',', env = "MCP_ALLOWED_HOSTS")]
+    #[serde(default)]
+    pub allowed_hosts: Option<Vec<String>>,
+
+    /// Disable allowed hosts check (NOT recommended for public deployments)
+    /// 禁用 allowed_hosts 检查（不推荐用于公网部署）
+    #[arg(long, env = "MCP_DISABLE_ALLOWED_HOSTS")]
+    #[serde(default)]
+    pub disable_allowed_hosts: bool,
 }
 
 /// Default value for disable_tools
 fn default_disable_tools() -> Vec<String> {
     vec![
         "file_write".to_string(),
-        "file_copy".to_string(),
-        "file_move".to_string(),
-        "file_delete".to_string(),
-        "file_rename".to_string(),
+        "file_ops".to_string(),
+        "file_edit".to_string(),
         "http_request".to_string(),
         "datetime".to_string(),
-        "image_read".to_string(),
         "execute_command".to_string(),
         "process_list".to_string(),
-        "base64_encode".to_string(),
-        "base64_decode".to_string(),
+        "base64_codec".to_string(),
         "hash_compute".to_string(),
         "system_info".to_string(),
     ]
@@ -123,16 +131,6 @@ impl AppConfig {
     /// Check if a tool is disabled
     pub fn is_tool_disabled(&self, tool_name: &str) -> bool {
         self.disable_tools.iter().any(|t| t.trim() == tool_name)
-    }
-
-    /// Get list of initially disabled tools
-    #[allow(dead_code)]
-    pub fn get_disabled_tools(&self) -> Vec<String> {
-        self.disable_tools
-            .iter()
-            .map(|s| s.trim().to_string())
-            .filter(|s| !s.is_empty())
-            .collect()
     }
 
     /// Check if a dangerous command is allowed
@@ -173,40 +171,79 @@ impl AppConfig {
     /// Returns Some(command_id) if dangerous command found and not allowed
     pub fn check_dangerous_command(&self, command: &str) -> Option<u8> {
         let cmd_lower = command.to_lowercase();
-        
-        // Linux dangerous commands
-        let dangerous_patterns: Vec<(u8, Vec<&str>)> = vec![
-            (1, vec!["rm -rf /", "rm -rf /*", "rm -rf ~", "rm -rf ~/*"]),
-            (2, vec!["del /", "del c:\\", "del *.* /s/q", "del /f/s/q"]),
-            (3, vec!["format /", "format c:", "format /fs:"]),
-            (4, vec!["mkfs.", "mkfs /dev/"]),
-            (5, vec!["dd if=/dev/zero of=/", "dd if=/dev/random"]),
-            (6, vec![":(){:|:&};:", "fork bomb"]),
-            (7, vec!["eval $(", "eval `"]),
-            (8, vec!["exec ", "exec("]),
-            (9, vec!["system(", "system ("]),
-            (10, vec!["shred -", "shred /"]),
-            (11, vec!["rd /s /q", "rd /s/q", "rmdir /s /q"]),
-            (13, vec!["diskpart", "diskpart.exe"]),
-            (14, vec!["reg delete", "reg add", "reg import", "regedit /s"]),
-            (15, vec!["net user", "net localgroup", "net stop", "net start", "net share", "net use"]),
-            (16, vec!["sc delete", "sc config", "sc stop", "sc start"]),
-            (17, vec!["schtasks /create", "schtasks /delete", "schtasks /run"]),
-            (18, vec!["powercfg /", "powercfg -"]),
-            (19, vec!["bcdedit /", "bcdedit -"]),
-            (20, vec!["wevtutil cl", "wevtutil clear-log"]),
+        let cmd_trimmed = cmd_lower.trim();
+
+        // Dangerous command profiles: (id, base_command_prefixes, required_substrings)
+        // If prefixes is empty, only substrings are checked.
+        // If substrings is empty, matching any prefix is sufficient.
+        let profiles: Vec<(u8, Vec<&str>, Vec<&str>)> = vec![
+            // 1: rm with recursive/delete flags
+            (1, vec!["rm "], vec!["-r", "-rf", "--recursive", "-fr"]),
+            // 2: del / erase with recursive/force flags
+            (2, vec!["del ", "erase "], vec!["/s", "/q", "/f"]),
+            // 3: format disk
+            (3, vec!["format "], vec![]),
+            // 4: mkfs
+            (4, vec!["mkfs.", "mkfs "], vec![]),
+            // 5: dd with if=/of=
+            (5, vec!["dd "], vec!["if=", "of="]),
+            // 6: fork bomb
+            (6, vec![], vec![":(){:|:&};:", "fork bomb"]),
+            // 7: eval with code execution patterns
+            (7, vec!["eval "], vec!["$(", "`"]),
+            // 8: exec
+            (8, vec!["exec "], vec![]),
+            // 9: system
+            (9, vec!["system(", "system "], vec![]),
+            // 10: shred
+            (10, vec!["shred "], vec![]),
+            // 11: rd / rmdir with /s
+            (11, vec!["rd ", "rmdir "], vec!["/s", "/q"]),
+            // 12: format (Windows, same as 3)
+            // 13: diskpart
+            (13, vec!["diskpart", "diskpart.exe"], vec![]),
+            // 14: reg modifications
+            (14, vec!["reg "], vec!["delete", "add", "import"]),
+            // 15: net commands
+            (15, vec!["net "], vec!["user", "localgroup", "stop", "start", "share", "use"]),
+            // 16: sc service control
+            (16, vec!["sc "], vec!["delete", "config", "stop", "start"]),
+            // 17: schtasks
+            (17, vec!["schtasks "], vec!["/create", "/delete", "/run"]),
+            // 18: powercfg
+            (18, vec!["powercfg ", "powercfg-"], vec![]),
+            // 19: bcdedit
+            (19, vec!["bcdedit ", "bcdedit-"], vec![]),
+            // 20: wevtutil clear
+            (20, vec!["wevtutil "], vec!["cl", "clear-log"]),
         ];
-        
-        for (id, patterns) in dangerous_patterns {
-            if !self.is_dangerous_command_allowed(id) {
-                for pattern in patterns {
-                    if cmd_lower.contains(&pattern.to_lowercase()) {
-                        return Some(id);
+
+        for (id, prefixes, substrings) in profiles {
+            if self.is_dangerous_command_allowed(id) {
+                continue;
+            }
+
+            let matched = if prefixes.is_empty() {
+                // Pure substring match (e.g. fork bomb)
+                substrings.iter().any(|s| cmd_trimmed.contains(s))
+            } else {
+                // Must match a prefix first
+                prefixes.iter().any(|prefix| {
+                    if !cmd_trimmed.starts_with(prefix) {
+                        return false;
                     }
-                }
+                    if substrings.is_empty() {
+                        return true;
+                    }
+                    substrings.iter().any(|s| cmd_trimmed.contains(s))
+                })
+            };
+
+            if matched {
+                return Some(id);
             }
         }
-        
+
         None
     }
 }
@@ -231,6 +268,9 @@ mod tests {
             working_dir: PathBuf::from("."),
             log_level: "info".to_string(),
             disable_webui: false,
+            allow_dangerous_commands: vec![],
+            allowed_hosts: None,
+            disable_allowed_hosts: false,
         };
 
         assert!(config.is_tool_disabled("execute_command"));

@@ -1,3 +1,4 @@
+use crate::config::AppConfig;
 use crate::mcp::state::ServerState;
 use crate::utils::file_utils::is_path_within_working_dir;
 use rmcp::handler::server::wrapper::Parameters;
@@ -14,7 +15,6 @@ use tokio::time::{timeout, Duration};
 use tracing::{info, warn};
 
 const MAX_OUTPUT_SIZE: usize = 100 * 1024; // 100KB output limit
-// Note: Pending commands timeout is handled in state.rs (300 seconds)
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct ExecuteCommandParams {
@@ -30,17 +30,20 @@ pub struct ExecuteCommandParams {
     /// Environment variables as key=value pairs
     #[schemars(description = "Environment variables as JSON object")]
     pub env: Option<serde_json::Map<String, serde_json::Value>>,
+    /// Shell to use. On Windows: "cmd" (default), "powershell", "pwsh". On Unix: "sh" (default), "bash", "zsh".
+    #[schemars(description = "Shell to use: cmd/powershell/pwsh on Windows; sh/bash/zsh on Unix")]
+    pub shell: Option<String>,
 }
 
 /// Check for command injection patterns
+#[cfg(not(windows))]
 fn has_injection_patterns(command: &str) -> bool {
     let dangerous_chars = [';', '|', '&', '`', '$', '(', ')', '<', '>'];
     let command_trimmed = command.trim();
-    
-    // Check for dangerous characters outside of quoted strings
+
     let mut in_single_quote = false;
     let mut in_double_quote = false;
-    
+
     for c in command_trimmed.chars() {
         match c {
             '\'' if !in_double_quote => in_single_quote = !in_single_quote,
@@ -49,7 +52,26 @@ fn has_injection_patterns(command: &str) -> bool {
             _ => {}
         }
     }
-    
+
+    false
+}
+
+/// Check for command injection patterns (Windows variant)
+#[cfg(windows)]
+fn has_injection_patterns(command: &str) -> bool {
+    let dangerous_chars = [';', '|', '&', '`', '$', '(', ')', '<', '>', '%', '^'];
+    let command_trimmed = command.trim();
+
+    let mut in_double_quote = false;
+
+    for c in command_trimmed.chars() {
+        match c {
+            '"' => in_double_quote = !in_double_quote,
+            _ if !in_double_quote && dangerous_chars.contains(&c) => return true,
+            _ => {}
+        }
+    }
+
     false
 }
 
@@ -67,6 +89,26 @@ fn truncate_output(output: String) -> String {
     }
 }
 
+/// Determine shell executable and argument based on platform and user request
+fn resolve_shell(shell: Option<&str>) -> (String, String) {
+    #[cfg(windows)]
+    {
+        match shell {
+            Some("powershell") => ("powershell.exe".to_string(), "-Command".to_string()),
+            Some("pwsh") => ("pwsh.exe".to_string(), "-Command".to_string()),
+            Some("cmd") | _ => ("cmd".to_string(), "/C".to_string()),
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        match shell {
+            Some("bash") => ("bash".to_string(), "-c".to_string()),
+            Some("zsh") => ("zsh".to_string(), "-c".to_string()),
+            Some("sh") | _ => ("sh".to_string(), "-c".to_string()),
+        }
+    }
+}
+
 pub async fn execute_command(
     params: Parameters<ExecuteCommandParams>,
     working_dir: &Path,
@@ -78,11 +120,12 @@ pub async fn execute_command(
     let cwd = params.cwd.as_deref().unwrap_or(".");
     let cwd_path = Path::new(cwd);
     let command = params.command.trim();
+    let shell = params.shell.as_deref();
 
     // Audit log
     info!(
-        "[AUDIT] Execute command attempt: cwd={}, command={}",
-        cwd, command
+        "[AUDIT] Execute command attempt: cwd={}, command={}, shell={:?}",
+        cwd, command, shell
     );
 
     // Security check 1: working directory must be within allowed working directory
@@ -101,29 +144,25 @@ pub async fn execute_command(
     let config = state.config.read().await;
     let dangerous_check = config.check_dangerous_command(command);
     drop(config);
-    
+
     if let Some(dangerous_id) = dangerous_check {
-        // Check if this command is already pending (second attempt)
         if state.is_command_pending(command, cwd).await {
-            // User confirmed - remove from pending and proceed with warning
             state.remove_pending_command(command, cwd).await;
             warn!(
                 "[AUDIT] Dangerous command executed after confirmation: id={}, command={}",
                 dangerous_id, command
             );
         } else {
-            // First attempt - add to pending and request confirmation
             state.add_pending_command(command, cwd).await;
-            
+
             let cmd_name = AppConfig::get_dangerous_command_name(dangerous_id)
                 .unwrap_or("Unknown dangerous command");
-            
+
             info!(
                 "[AUDIT] Dangerous command pending confirmation: id={}, command={}",
                 dangerous_id, command
             );
 
-            // Return error asking for user confirmation
             return Err(format!(
                 "Security Warning: Dangerous command '{}' detected.\n\
                 \n\
@@ -139,7 +178,6 @@ pub async fn execute_command(
 
     // Security check 3: check for injection patterns
     if has_injection_patterns(command) {
-        // Check if already pending
         if state.is_command_pending(command, cwd).await {
             state.remove_pending_command(command, cwd).await;
             warn!(
@@ -148,7 +186,7 @@ pub async fn execute_command(
             );
         } else {
             state.add_pending_command(command, cwd).await;
-            
+
             info!(
                 "[AUDIT] Command with injection patterns pending confirmation: command={}",
                 command
@@ -173,15 +211,12 @@ pub async fn execute_command(
     // Clean up expired pending commands
     state.cleanup_expired_pending_commands().await;
 
-    // Determine shell based on OS
-    #[cfg(windows)]
-    let (shell, shell_arg) = ("cmd", "/C");
-    #[cfg(not(windows))]
-    let (shell, shell_arg) = ("sh", "-c");
+    // Determine shell based on OS and user preference
+    let (shell_exec, shell_arg) = resolve_shell(shell);
 
     // Build command
-    let mut cmd = Command::new(shell);
-    cmd.arg(shell_arg).arg(command);
+    let mut cmd = Command::new(&shell_exec);
+    cmd.arg(&shell_arg).arg(command);
     cmd.current_dir(cwd_path);
     cmd.stdout(Stdio::piped());
     cmd.stderr(Stdio::piped());
@@ -206,7 +241,6 @@ pub async fn execute_command(
             let stderr = String::from_utf8_lossy(&output.stderr);
             let exit_code = output.status.code().unwrap_or(-1);
 
-            // Truncate outputs if too large
             let stdout = truncate_output(stdout.to_string());
             let stderr = truncate_output(stderr.to_string());
 
@@ -252,13 +286,9 @@ pub async fn execute_command(
     }
 }
 
-// Import AppConfig for command name lookup
-use crate::config::AppConfig;
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tempfile::TempDir;
 
     #[test]
     fn test_has_injection_patterns() {
@@ -268,7 +298,7 @@ mod tests {
         assert!(has_injection_patterns("echo $(whoami)"));
         assert!(has_injection_patterns("cmd `whoami`"));
         assert!(!has_injection_patterns("ls -la"));
-        assert!(!has_injection_patterns("cat 'file with ; in name'"));
+        assert!(!has_injection_patterns(r#"cat "file with ; in name""#));
         assert!(!has_injection_patterns("echo \"hello world\""));
     }
 
@@ -281,5 +311,21 @@ mod tests {
         let truncated = truncate_output(large.clone());
         assert!(truncated.len() < large.len());
         assert!(truncated.contains("truncated"));
+    }
+
+    #[test]
+    fn test_resolve_shell() {
+        #[cfg(windows)]
+        {
+            assert_eq!(resolve_shell(Some("cmd")), ("cmd".to_string(), "/C".to_string()));
+            assert_eq!(resolve_shell(Some("powershell")), ("powershell.exe".to_string(), "-Command".to_string()));
+            assert_eq!(resolve_shell(None), ("cmd".to_string(), "/C".to_string()));
+        }
+        #[cfg(not(windows))]
+        {
+            assert_eq!(resolve_shell(Some("sh")), ("sh".to_string(), "-c".to_string()));
+            assert_eq!(resolve_shell(Some("bash")), ("bash".to_string(), "-c".to_string()));
+            assert_eq!(resolve_shell(None), ("sh".to_string(), "-c".to_string()));
+        }
     }
 }

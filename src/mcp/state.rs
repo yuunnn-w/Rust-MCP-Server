@@ -1,4 +1,5 @@
 use crate::config::AppConfig;
+use crate::utils::system_metrics::{MetricsCollector, SystemMetrics};
 use dashmap::DashMap;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, VecDeque};
@@ -6,6 +7,10 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::{broadcast, RwLock, Semaphore};
 use tracing::info;
+
+/// Notification that the tool list has changed, to be sent to MCP clients
+#[derive(Debug, Clone)]
+pub struct ToolListChangedSignal;
 
 /// Status of a single tool
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -78,7 +83,7 @@ impl ToolStatus {
             return vec![];
         }
         
-        let num_intervals = (total_minutes + interval_minutes - 1) / interval_minutes;
+        let num_intervals = total_minutes.div_ceil(interval_minutes);
         let now = Instant::now();
         let mut stats = vec![0usize; num_intervals as usize];
         
@@ -133,6 +138,7 @@ pub enum StatusUpdate {
         tool: String,
         enabled: bool,
     },
+    #[serde(rename_all = "camelCase")]
     McpServiceStatus {
         running: bool,
     },
@@ -163,6 +169,8 @@ pub struct ServerState {
     pub config: RwLock<AppConfig>,
     /// Status update broadcaster
     pub status_tx: broadcast::Sender<StatusUpdate>,
+    /// Tool list changed signal broadcaster (for MCP clients)
+    pub tool_list_changed_tx: broadcast::Sender<ToolListChangedSignal>,
     /// Current concurrent calls
     pub current_calls: RwLock<usize>,
     /// Maximum concurrent calls allowed
@@ -171,26 +179,29 @@ pub struct ServerState {
     pub mcp_running: RwLock<bool>,
     /// Pending commands waiting for user confirmation (command_hash -> PendingCommand)
     pub pending_commands: RwLock<HashMap<String, PendingCommand>>,
+    /// System metrics collector
+    pub metrics_collector: MetricsCollector,
 }
 
 impl ServerState {
     /// Create new server state
     pub fn new(config: AppConfig) -> Arc<Self> {
         let (status_tx, _) = broadcast::channel(100);
+        let (tool_list_changed_tx, _) = broadcast::channel(100);
         let max_concurrency = config.max_concurrency;
 
-        let state = Arc::new(Self {
+        Arc::new(Self {
             tool_status: DashMap::new(),
             concurrency_limiter: Semaphore::new(max_concurrency),
             config: RwLock::new(config),
             status_tx,
+            tool_list_changed_tx,
             current_calls: RwLock::new(0),
             max_concurrency: RwLock::new(max_concurrency),
             mcp_running: RwLock::new(false),
             pending_commands: RwLock::new(HashMap::new()),
-        });
-
-        state
+            metrics_collector: MetricsCollector::new(),
+        })
     }
 
     /// Initialize tool status (only for tools that don't exist yet)
@@ -239,6 +250,8 @@ impl ServerState {
                     tool: tool_name.to_string(),
                     enabled,
                 });
+                // Notify MCP clients that tool list has changed
+                let _ = self.tool_list_changed_tx.send(ToolListChangedSignal);
                 info!("Tool '{}' {}abled", tool_name, if enabled { "en" } else { "dis" });
                 Ok(())
             }
@@ -274,18 +287,18 @@ impl ServerState {
     }
 
     /// Record a tool call end
-    pub async fn record_call_end(&self, tool_name: &str) {
-        // Update current calls count (延迟5秒发送SSE)
-        let current = {
+    pub async fn record_call_end(self: &Arc<Self>, tool_name: &str) {
+        // Update current calls count
+        {
             let mut calls = self.current_calls.write().await;
             *calls = calls.saturating_sub(1);
-            *calls
-        };
+        }
         let max = *self.max_concurrency.read().await;
-        let status_tx = self.status_tx.clone();
+        let state = Arc::clone(self);
         tokio::spawn(async move {
             tokio::time::sleep(std::time::Duration::from_secs(5)).await;
-            let _ = status_tx.send(StatusUpdate::ConcurrentCalls {
+            let current = *state.current_calls.read().await;
+            let _ = state.status_tx.send(StatusUpdate::ConcurrentCalls {
                 current,
                 max,
             });
@@ -425,6 +438,11 @@ impl ServerState {
             pending.remove(&hash);
         }
     }
+
+    /// Collect current system metrics
+    pub fn collect_metrics(&self) -> SystemMetrics {
+        self.metrics_collector.collect()
+    }
 }
 
 #[cfg(test)]
@@ -443,6 +461,9 @@ mod tests {
             working_dir: std::path::PathBuf::from("."),
             log_level: "info".to_string(),
             disable_webui: false,
+            allow_dangerous_commands: vec![],
+            allowed_hosts: None,
+            disable_allowed_hosts: false,
         }
     }
 
@@ -471,7 +492,7 @@ mod tests {
         state.init_tools(vec![
             ("tool1".to_string(), "Tool 1".to_string(), false),
             ("tool2".to_string(), "Tool 2".to_string(), true),
-        ]);
+        ]).await;
         
         assert!(state.is_tool_enabled("tool1").await);
         assert!(state.is_tool_enabled("tool2").await);

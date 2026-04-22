@@ -62,7 +62,7 @@ Get detailed statistics for a specific tool.
 - `name`: Tool name
 - `total_calls`: Total number of calls since startup
 - `recent_calls_15min`: Calls in last 15 minutes
-- `stats_history`: Array of call counts per 15-minute interval (last 2 hours)
+- `stats_history`: Array of call counts per 5-minute interval (last 2 hours)
 - `recent_call_times`: Timestamps of recent calls
 
 #### GET /api/tool/{name}/detail
@@ -93,7 +93,8 @@ Enable or disable a tool.
 ```json
 {
   "success": true,
-  "message": "Tool 'file_read' disabled"
+  "tool": "file_read",
+  "enabled": false
 }
 ```
 
@@ -134,9 +135,7 @@ Get current server configuration.
   "mcp_port": 3344,
   "max_concurrency": 10,
   "working_dir": ".",
-  "log_level": "info",
-  "disable_webui": false,
-  "disable_tools": ["execute_command", "file_write"]
+  "log_level": "info"
 }
 ```
 
@@ -154,16 +153,23 @@ Update configuration (limited options).
 ```json
 {
   "success": true,
-  "config": {
-    "max_concurrency": 20,
-    ...
-  }
+  "message": "Configuration updated successfully",
+  "changes": ["max_concurrency"],
+  "restart_required": false
 }
 ```
 
 **Updatable fields:**
-- `max_concurrency`
-- `log_level`
+- `webui_host`
+- `webui_port`
+- `mcp_transport` (`"http"` or `"sse"`)
+- `mcp_host`
+- `mcp_port`
+- `max_concurrency` (range: 1-1000)
+- `working_dir`
+- `log_level` (`"trace"`, `"debug"`, `"info"`, `"warn"`, `"error"`)
+
+**Note:** Changes to `mcp_transport`, `mcp_host`, `mcp_port`, `webui_host`, `webui_port`, `log_level`, or `working_dir` require a server restart to take full effect. The response will include `restart_required: true` when this is the case.
 
 ### MCP Service Control
 
@@ -207,14 +213,23 @@ Search tools by name or description.
 
 **Response:**
 ```json
+["file_read", "file_search", "dir_list"]
+```
+
+### Version Information
+
+#### GET /api/version
+Get server version and metadata.
+
+**Response:**
+```json
 {
-  "tools": [
-    {
-      "name": "file_read",
-      "description": "Read text file content with line range support",
-      "enabled": true
-    }
-  ]
+  "name": "rust-mcp-server",
+  "version": "0.2.0",
+  "description": "A high-performance MCP server with WebUI control panel",
+  "authors": "MCP Server Team",
+  "repository": "https://github.com/yuunnn-w/Rust-MCP-Server",
+  "license": "GPL-3.0"
 }
 ```
 
@@ -310,9 +325,85 @@ Response:
           "properties": {
             "path": {"type": "string"},
             "start_line": {"type": "integer"},
-            "end_line": {"type": "integer"}
+            "end_line": {"type": "integer"},
+            "highlight_line": {"type": "integer"}
           },
           "required": ["path"]
+        }
+      },
+      {
+        "name": "file_edit",
+        "description": "Edit file using string_replace, line_replace, insert, delete, or patch mode",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "path": {"type": "string"},
+            "mode": {"type": "string"},
+            "old_string": {"type": "string"},
+            "new_string": {"type": "string"},
+            "start_line": {"type": "integer"},
+            "end_line": {"type": "integer"},
+            "patch": {"type": "string"}
+          },
+          "required": ["path"]
+        }
+      },
+      {
+        "name": "json_query",
+        "description": "Query a JSON file using JSON Pointer syntax",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "path": {"type": "string"},
+            "query": {"type": "string"}
+          },
+          "required": ["path", "query"]
+        }
+      },
+      {
+        "name": "file_stat",
+        "description": "Get file or directory metadata",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "path": {"type": "string"}
+          },
+          "required": ["path"]
+        }
+      },
+      {
+        "name": "path_exists",
+        "description": "Check if a path exists and get its type",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "path": {"type": "string"}
+          },
+          "required": ["path"]
+        }
+      },
+      {
+        "name": "git_ops",
+        "description": "Run git commands in a repository",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "action": {"type": "string"},
+            "repo_path": {"type": "string"},
+            "options": {"type": "array", "items": {"type": "string"}}
+          },
+          "required": ["action"]
+        }
+      },
+      {
+        "name": "env_get",
+        "description": "Get the value of an environment variable",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "name": {"type": "string"}
+          },
+          "required": ["name"]
         }
       }
     ]
@@ -339,7 +430,7 @@ Request:
 }
 ```
 
-Success Response:
+Success Response (text tool):
 ```json
 {
   "jsonrpc": "2.0",
@@ -354,6 +445,29 @@ Success Response:
   }
 }
 ```
+
+**image_read Response (full mode):**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 3,
+  "result": {
+    "content": [
+      {
+        "type": "image",
+        "data": "iVBORw0KGgoAAAANSUhEUgAA...",
+        "mimeType": "image/png"
+      },
+      {
+        "type": "text",
+        "text": "Image: screenshot.png, Dimensions: 1920x1080, Size: 1.2 MB, Type: image/png"
+      }
+    ]
+  }
+}
+```
+
+The first content item is an MCP-standard `ImageContent` with raw base64 data (no JSON wrapper), enabling vision-model clients to route the image through their encoder. The second item is human-readable metadata text.
 
 Error Response:
 ```json

@@ -401,14 +401,18 @@ mod tests {
             expression: "pi * 2".to_string(),
         };
         let result = calculator(Parameters(params)).await.unwrap();
-        assert!(!result.is_error);
+        assert!(!result.is_error.unwrap_or(false));
     }
 
     #[test]
     fn test_tokenize() {
-        let tokens = tokenize("2 + 3 * 4").unwrap();
+        // Tokenize doesn't handle whitespace - it should be filtered before calling
+        let tokens = tokenize("2+3*4").unwrap();
         assert_eq!(tokens.len(), 5);
         assert_eq!(tokens[0], Token::Number(2.0));
         assert_eq!(tokens[1], Token::Plus);
+        assert_eq!(tokens[2], Token::Number(3.0));
+        assert_eq!(tokens[3], Token::Multiply);
+        assert_eq!(tokens[4], Token::Number(4.0));
     }
 }

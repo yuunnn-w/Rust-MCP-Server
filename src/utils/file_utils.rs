@@ -2,6 +2,27 @@ use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 use chrono::{DateTime, Local};
 
+/// Match a glob pattern against a file name. Supports * and ? wildcards.
+pub fn glob_match(pattern: &str, name: &str) -> bool {
+    let mut regex_str = String::new();
+    regex_str.push('^');
+    for ch in pattern.chars() {
+        match ch {
+            '*' => regex_str.push_str(".*"),
+            '?' => regex_str.push('.'),
+            '.' | '+' | '(' | ')' | '[' | ']' | '{' | '}' | '\\' | '^' | '$' | '|' => {
+                regex_str.push('\\');
+                regex_str.push(ch);
+            }
+            _ => regex_str.push(ch),
+        }
+    }
+    regex_str.push('$');
+    regex::Regex::new(&regex_str)
+        .map(|re| re.is_match(name))
+        .unwrap_or(false)
+}
+
 /// Format file size to human readable string
 pub fn format_file_size(size: u64) -> String {
     const UNITS: &[&str] = &["B", "KB", "MB", "GB", "TB"];
@@ -24,9 +45,13 @@ pub fn is_path_within_working_dir(path: &Path, working_dir: &Path) -> bool {
             canonical_path.starts_with(&canonical_working)
         }
         _ => {
-            // Fallback: try to check with absolute paths
+            // Fallback: normalize and check with absolute paths
             match (path.absolutize(), working_dir.absolutize()) {
-                (Ok(abs_path), Ok(abs_working)) => abs_path.starts_with(&abs_working),
+                (Ok(abs_path), Ok(abs_working)) => {
+                    let norm_path = normalize_path(&abs_path);
+                    let norm_working = normalize_path(&abs_working);
+                    norm_path.starts_with(&norm_working)
+                }
                 _ => false,
             }
         }
@@ -102,7 +127,8 @@ pub fn ensure_path_within_working_dir(
             }
             None => {
                 // No parent (root path)
-                if path_to_check.starts_with(&canonical_working) {
+                let norm_path = normalize_path(&path_to_check);
+                if norm_path.starts_with(&canonical_working) {
                     return Ok(path_to_check);
                 } else {
                     return Err(format!(
@@ -152,6 +178,12 @@ pub fn is_text_file(path: &Path) -> bool {
         "sh", "bash", "zsh", "ps1", "bat", "cmd",
         "c", "cpp", "h", "hpp", "java", "go", "rb", "php", "swift",
         "kt", "scala", "r", "m", "mm", "sql", "lua", "pl", "pm",
+        // Extended for modern projects
+        "vue", "svelte", "tsx", "jsx", "dart", "nix", "dockerfile",
+        "gradle", "kts", "purs", "hs", "lhs", "elm", "erl", "hrl",
+        "ex", "exs", "clj", "cljs", "edn", "tf", "hcl", "proto",
+        "graphql", "gql", "prisma", "makefile", "mk", "cmake",
+        "ninja", "patch", "diff", "lock", "sum", "mod",
     ];
 
     match get_file_extension(path) {
@@ -160,42 +192,118 @@ pub fn is_text_file(path: &Path) -> bool {
     }
 }
 
+/// Check if a directory should be skipped during recursive traversal
+/// (common build/output directories that waste time and context)
+pub fn should_skip_dir(name: &str) -> bool {
+    const SKIP_DIRS: &[&str] = &[
+        ".git",
+        "target",
+        "node_modules",
+        "__pycache__",
+        ".venv",
+        "venv",
+        "dist",
+        "build",
+        ".idea",
+        ".vscode",
+        "out",
+        "coverage",
+        ".cargo",
+    ];
+    SKIP_DIRS.contains(&name)
+}
+
+/// Read file lines with optional line number prefix and character limit.
+/// Returns the rendered text, number of lines rendered, whether truncated,
+/// and the total line count of the file.
+pub async fn read_file_with_options(
+    path: &Path,
+    start_line: usize,
+    end_line: usize,
+    max_chars: usize,
+    line_numbers: bool,
+) -> Result<(String, usize, bool, usize), String> {
+    let content = tokio::fs::read_to_string(path)
+        .await
+        .map_err(|e| format!("Failed to read file '{}': {}", path.display(), e))?;
+
+    let lines: Vec<&str> = content.lines().collect();
+    let total_lines = lines.len();
+
+    let start = start_line.min(total_lines);
+    let end = end_line.min(total_lines);
+
+    let selected: Vec<&str> = if start < total_lines && start < end {
+        lines[start..end].to_vec()
+    } else {
+        vec![]
+    };
+
+    let mut result = String::new();
+    let mut chars_count = 0;
+    let mut truncated = false;
+    let mut lines_included = 0;
+
+    for (idx, line) in selected.iter().enumerate() {
+        let line_num = start + idx;
+        let formatted = if line_numbers {
+            format!("{:4} | {}\n", line_num, line)
+        } else {
+            format!("{}\n", line)
+        };
+
+        if chars_count + formatted.len() > max_chars {
+            truncated = true;
+            break;
+        }
+
+        chars_count += formatted.len();
+        result.push_str(&formatted);
+        lines_included += 1;
+    }
+
+    // Trim trailing newline for cleaner output
+    if result.ends_with('\n') {
+        result.pop();
+    }
+
+    Ok((result, lines_included, truncated, total_lines))
+}
+
+/// Normalize a path by resolving `.` and `..` components without touching the filesystem.
+/// Unlike `canonicalize()`, this does not require the path to exist.
+fn normalize_path(path: &Path) -> PathBuf {
+    use std::path::Component;
+    let mut result = PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::Prefix(prefix) => result.push(prefix.as_os_str()),
+            Component::RootDir => result.push(component.as_os_str()),
+            Component::CurDir => {}
+            Component::ParentDir => {
+                // Only pop normal components, never pop root or prefix
+                if result.file_name().is_some() {
+                    result.pop();
+                }
+            }
+            Component::Normal(part) => result.push(part),
+        }
+    }
+    result
+}
+
 /// Safe path join that prevents directory traversal
-#[allow(dead_code)]
+/// Note: This function is currently only used in tests
+#[cfg(test)]
 pub fn safe_join(base: &Path, subpath: &str) -> Option<PathBuf> {
     let joined = base.join(subpath);
-    let normalized = normalize_path(&joined)?;
+    let normalized = normalize_path(&joined);
     
     if normalized.starts_with(base) {
         Some(normalized)
     } else {
         None
     }
-}
-
-/// Normalize a path (resolve . and ..)
-#[allow(dead_code)]
-fn normalize_path(path: &Path) -> Option<PathBuf> {
-    let mut result = PathBuf::new();
-    
-    for component in path.components() {
-        match component {
-            std::path::Component::Prefix(_) | std::path::Component::RootDir => {
-                result.push(component);
-            }
-            std::path::Component::CurDir => {}
-            std::path::Component::ParentDir => {
-                if !result.pop() {
-                    return None; // Path traverses above root
-                }
-            }
-            std::path::Component::Normal(part) => {
-                result.push(part);
-            }
-        }
-    }
-    
-    Some(result)
 }
 
 trait Absolutize {
