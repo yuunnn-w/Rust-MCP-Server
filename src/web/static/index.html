@@ -211,38 +211,42 @@
             <div class="modal-body">
                 <form id="config-form">
                     <div class="form-group">
-                        <label for="cfg-webui-host">WebUI Host</label>
+                        <label for="cfg-webui-host" data-i18n-key="cfgWebuiHost">WebUI Host</label>
                         <input type="text" id="cfg-webui-host" name="webui_host">
                     </div>
                     <div class="form-group">
-                        <label for="cfg-webui-port">WebUI Port</label>
+                        <label for="cfg-webui-port" data-i18n-key="cfgWebuiPort">WebUI Port</label>
                         <input type="number" id="cfg-webui-port" name="webui_port" min="1" max="65535">
                     </div>
                     <div class="form-group">
-                        <label for="cfg-mcp-transport">MCP Transport</label>
+                        <label for="cfg-mcp-transport" data-i18n-key="cfgMcpTransport">MCP Transport</label>
                         <select id="cfg-mcp-transport" name="mcp_transport">
                             <option value="http">HTTP</option>
                             <option value="sse">SSE</option>
                         </select>
                     </div>
                     <div class="form-group">
-                        <label for="cfg-mcp-host">MCP Host</label>
+                        <label for="cfg-mcp-host" data-i18n-key="cfgMcpHost">MCP Host</label>
                         <input type="text" id="cfg-mcp-host" name="mcp_host">
                     </div>
                     <div class="form-group">
-                        <label for="cfg-mcp-port">MCP Port</label>
+                        <label for="cfg-mcp-port" data-i18n-key="cfgMcpPort">MCP Port</label>
                         <input type="number" id="cfg-mcp-port" name="mcp_port" min="1" max="65535">
                     </div>
                     <div class="form-group">
-                        <label for="cfg-max-concurrency">Max Concurrency</label>
+                        <label for="cfg-max-concurrency" data-i18n-key="cfgMaxConcurrency">Max Concurrency</label>
                         <input type="number" id="cfg-max-concurrency" name="max_concurrency" min="1" max="1000">
                     </div>
                     <div class="form-group">
-                        <label for="cfg-working-dir">Working Directory</label>
-                        <input type="text" id="cfg-working-dir" name="working_dir">
+                        <label for="cfg-working-dir" data-i18n-key="cfgWorkingDir">Working Directory</label>
+                        <div class="input-with-btn">
+                            <input type="text" id="cfg-working-dir" name="working_dir">
+                            <button type="button" class="btn btn-info" id="browse-working-dir">浏览</button>
+                        </div>
+                        <input type="file" id="working-dir-picker" webkitdirectory directory style="display:none">
                     </div>
                     <div class="form-group">
-                        <label for="cfg-log-level">Log Level</label>
+                        <label for="cfg-log-level" data-i18n-key="cfgLogLevel">Log Level</label>
                         <select id="cfg-log-level" name="log_level">
                             <option value="trace">trace</option>
                             <option value="debug">debug</option>

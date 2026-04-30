@@ -7,6 +7,12 @@
 
 ## [Unreleased]
 
+### 新增功能
+- 新增工具 `execute_python`：基于 RustPython 解释器执行 Python 代码，支持本地文件系统访问。具备 stdout/stderr 捕获、超时控制（1-30秒）、自动末行表达式求值、`__working_dir` 全局变量注入等特性。标记为危险工具，默认禁用。
+
+### 安全
+- `execute_python` 因具备文件系统访问能力被归类为危险工具，请通过 WebUI 或 `--disable-tools` 配置谨慎启用。
+
 ## [0.2.0] - 2024-04-22
 
 ### 新增功能

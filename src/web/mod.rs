@@ -26,6 +26,7 @@ pub fn create_router(state: Arc<ServerState>) -> Router {
         .route("/api/tool/{name}/stats", get(handlers::get_tool_stats))
         .route("/api/tool/{name}/detail", get(handlers::get_tool_detail))
         .route("/api/tool/{name}/enable", post(handlers::enable_tool))
+        .route("/api/python-fs-access", get(handlers::get_python_fs_access).post(handlers::set_python_fs_access))
         .route("/api/config", get(handlers::get_config).put(handlers::update_config))
         .route("/api/mcp/start", post(handlers::start_mcp))
         .route("/api/mcp/stop", post(handlers::stop_mcp))

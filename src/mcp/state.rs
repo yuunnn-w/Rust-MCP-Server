@@ -207,6 +207,8 @@ pub struct ServerState {
     pub pending_commands: RwLock<HashMap<String, PendingCommand>>,
     /// System metrics collector
     pub metrics_collector: MetricsCollector,
+    /// Whether execute_python tool has filesystem access enabled
+    pub python_fs_access_enabled: RwLock<bool>,
 }
 
 impl ServerState {
@@ -227,6 +229,7 @@ impl ServerState {
             mcp_running: RwLock::new(false),
             pending_commands: RwLock::new(HashMap::new()),
             metrics_collector: MetricsCollector::new(),
+            python_fs_access_enabled: RwLock::new(false),
         })
     }
 
@@ -390,6 +393,18 @@ impl ServerState {
             current: *self.current_calls.read().await,
             max,
         });
+    }
+
+    /// Check if python filesystem access is enabled
+    pub async fn is_python_fs_access_enabled(&self) -> bool {
+        *self.python_fs_access_enabled.read().await
+    }
+
+    /// Set python filesystem access enabled/disabled
+    pub async fn set_python_fs_access_enabled(&self, enabled: bool) {
+        let mut guard = self.python_fs_access_enabled.write().await;
+        *guard = enabled;
+        tracing::info!("Python filesystem access {}", if enabled { "enabled" } else { "disabled" });
     }
 
     /// Set MCP service running status

@@ -3,6 +3,7 @@ pub mod calculator;
 pub mod datetime;
 pub mod dir_list;
 pub mod env_get;
+pub mod execute_python;
 pub mod execute_command;
 pub mod file_edit;
 pub mod file_ops;
@@ -24,17 +25,17 @@ pub fn get_all_tools() -> Vec<(String, String, bool)> {
     vec![
         (
             "dir_list".to_string(),
-            "List directory contents with filtering and brief mode (max depth 5)".to_string(),
+            "List directory contents with filtering and brief mode (max depth 5). Not restricted to working directory.".to_string(),
             false,
         ),
         (
             "file_read".to_string(),
-            "Read text file content with line numbers and large range support".to_string(),
+            "Read text file content with line numbers and large range support. Not restricted to working directory.".to_string(),
             false,
         ),
         (
             "file_search".to_string(),
-            "Search for keyword and return matching content fragments with context (max depth 5)".to_string(),
+            "Search for keyword and return matching content fragments with context (max depth 5). Not restricted to working directory.".to_string(),
             false,
         ),
         (
@@ -54,22 +55,22 @@ pub fn get_all_tools() -> Vec<(String, String, bool)> {
         ),
         (
             "file_stat".to_string(),
-            "Get file or directory metadata (size, permissions, timestamps)".to_string(),
+            "Get file or directory metadata (size, permissions, timestamps). Not restricted to working directory.".to_string(),
             false,
         ),
         (
             "path_exists".to_string(),
-            "Check if a path exists and get its type (file/dir/symlink/none)".to_string(),
+            "Check if a path exists and get its type (file/dir/symlink/none). Not restricted to working directory.".to_string(),
             false,
         ),
         (
             "json_query".to_string(),
-            "Query a JSON file using JSON Pointer syntax".to_string(),
+            "Query a JSON file using JSON Pointer syntax. Not restricted to working directory.".to_string(),
             false,
         ),
         (
             "git_ops".to_string(),
-            "Run git commands (status, diff, log, branch, show) in a repository".to_string(),
+            "Run git commands (status, diff, log, branch, show) in a repository. Not restricted to working directory.".to_string(),
             false,
         ),
         (
@@ -89,7 +90,7 @@ pub fn get_all_tools() -> Vec<(String, String, bool)> {
         ),
         (
             "image_read".to_string(),
-            "Read image file and return base64 data or metadata only".to_string(),
+            "Read image file and return base64 data or metadata only. Not restricted to working directory.".to_string(),
             false,
         ),
         (
@@ -109,7 +110,7 @@ pub fn get_all_tools() -> Vec<(String, String, bool)> {
         ),
         (
             "hash_compute".to_string(),
-            "Compute hash of string or file (MD5, SHA1, SHA256). Prefix file path with 'file:' for files".to_string(),
+            "Compute hash of string or file (MD5, SHA1, SHA256). Prefix file path with 'file:' for files. Not restricted to working directory.".to_string(),
             false,
         ),
         (
@@ -120,6 +121,11 @@ pub fn get_all_tools() -> Vec<(String, String, bool)> {
         (
             "env_get".to_string(),
             "Get the value of an environment variable".to_string(),
+            false,
+        ),
+        (
+            "execute_python".to_string(),
+            "Execute Python code in a sandboxed environment for calculations, data processing, and logic evaluation. By default, filesystem access is disabled (safe). Set __result for return value. Available standard library modules: math, random, statistics, datetime, itertools, functools, collections, re, string, json, fractions, decimal, typing, hashlib, base64, bisect, heapq, copy, pprint, enum, types, dataclasses, inspect, sys.".to_string(),
             false,
         ),
     ]

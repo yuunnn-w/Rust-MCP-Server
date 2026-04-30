@@ -1,4 +1,4 @@
-use crate::utils::file_utils::{ensure_path_within_working_dir, is_text_file};
+use crate::utils::file_utils::{is_text_file, resolve_path};
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::model::CallToolResult;
 use rmcp::schemars::JsonSchema;
@@ -37,7 +37,7 @@ pub async fn json_query(
     let path = Path::new(&params.path);
     let max_chars = params.max_chars.unwrap_or(15000);
 
-    let canonical_path = ensure_path_within_working_dir(path, working_dir)?;
+    let canonical_path = resolve_path(path, working_dir)?;
 
     if !canonical_path.exists() {
         return Err(format!("File '{}' does not exist", params.path));

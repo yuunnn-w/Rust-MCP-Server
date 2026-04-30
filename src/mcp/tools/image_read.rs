@@ -1,4 +1,4 @@
-use crate::utils::file_utils::ensure_path_within_working_dir;
+use crate::utils::file_utils::resolve_path;
 use crate::utils::image_utils::{get_image_dimensions, get_image_mime_type, is_image_file};
 use base64::Engine;
 use rmcp::handler::server::wrapper::Parameters;
@@ -36,7 +36,7 @@ pub async fn image_read(
     let path = Path::new(&params.path);
     let mode = params.mode.as_deref().unwrap_or("full");
 
-    let canonical_path = ensure_path_within_working_dir(path, working_dir)?;
+    let canonical_path = resolve_path(path, working_dir)?;
 
     if !canonical_path.exists() {
         return Err(format!("Image file '{}' does not exist", params.path));

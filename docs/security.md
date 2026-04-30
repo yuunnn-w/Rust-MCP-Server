@@ -34,13 +34,13 @@ Rust MCP Server implements multiple layers of security to protect against malici
 
 ### 1. Working Directory Restriction
 
-All file operations are restricted to a configurable working directory to prevent unauthorized access to sensitive system files.
+Write operations (file_write, file_ops, file_edit, execute_command, execute_python) are restricted to a configurable working directory to prevent unauthorized modification of sensitive system files. Read-only tools (dir_list, file_read, file_search, file_stat, path_exists, json_query, git_ops, image_read, hash_compute) can access any path on the filesystem.
 
 **How it works:**
-1. All paths are canonicalized to absolute form
+1. All paths for write operations are canonicalized to absolute form
 2. Symbolic links are resolved
 3. Path traversal patterns (`../`) are detected and blocked
-4. Paths outside working directory are rejected
+4. Paths outside working directory are rejected for write operations
 
 **Configuration:**
 ```bash
@@ -52,7 +52,7 @@ export MCP_WORKING_DIR=/var/mcp-safe
 ./rust-mcp-server
 ```
 
-**Security Check:**
+**Security Check (write operations only):**
 ```rust
 // Pseudo-code
 fn validate_path(path: &Path, working_dir: &Path) -> bool {
@@ -199,30 +199,31 @@ Prevents memory exhaustion from large command outputs.
 
 ## Tool Classification
 
-### Safe Tools (15)
-These tools are safe to enable by default:
+### Safe Tools (17)
+These tools are safe to enable by default. Read-only file tools are not restricted to the working directory:
 - `calculator` - Mathematical calculations
-- `dir_list` - Directory listing
-- `file_read` - File reading
-- `file_search` - File content search
+- `dir_list` - Directory listing (no working directory restriction)
+- `file_read` - File reading (no working directory restriction)
+- `file_search` - File content search (no working directory restriction)
 - `datetime` - Date/time
 - `base64_codec` - Base64 encoding/decoding
-- `hash_compute` - Hash calculation
+- `hash_compute` - Hash calculation (no working directory restriction)
 - `http_request` - HTTP requests
-- `image_read` - Image reading
+- `image_read` - Image reading (no working directory restriction)
 - `system_info` - System information
-- `file_stat` - File/directory metadata
-- `path_exists` - Path existence check
-- `json_query` - JSON file querying
+- `file_stat` - File/directory metadata (no working directory restriction)
+- `path_exists` - Path existence check (no working directory restriction)
+- `json_query` - JSON file querying (no working directory restriction)
 - `env_get` - Environment variable reading
-- `git_ops` - Git repository read-only operations
+- `git_ops` - Git repository read-only operations (no working directory restriction)
 - `process_list` - System process listing
+- `execute_python` - Python code execution (sandboxed by default, filesystem access toggleable via WebUI)
 
 ### Dangerous Tools (4)
-These tools require caution:
-- `file_write` - File writing (can overwrite data)
-- `file_ops` - Copy, move, delete, or rename files
-- `file_edit` - Multi-mode file editing (can modify files)
+These tools require caution and are restricted to the working directory:
+- `file_write` - File writing (can overwrite data, restricted to working directory)
+- `file_ops` - Copy, move, delete, or rename files (restricted to working directory)
+- `file_edit` - Multi-mode file editing (can modify files, restricted to working directory)
 - `execute_command` - Shell command execution
 
 ## Best Practices

@@ -17,6 +17,7 @@ class CommandCenter {
         this.config = null;
         this.metricsInterval = null;
         this.theme = 'system'; // 'dark' | 'light' | 'system'
+        this.pythonFsAccessEnabled = false;
 
         this.i18n = {
             zh: {
@@ -49,6 +50,15 @@ class CommandCenter {
                 configTitle: '系统配置',
                 save: '保存',
                 cancel: '取消',
+                cfgWebuiHost: 'WebUI 主机',
+                cfgWebuiPort: 'WebUI 端口',
+                cfgMcpTransport: 'MCP 传输模式',
+                cfgMcpHost: 'MCP 主机',
+                cfgMcpPort: 'MCP 端口',
+                cfgMaxConcurrency: '最大并发数',
+                cfgWorkingDir: '工作目录',
+                cfgLogLevel: '日志级别',
+                browse: '浏览',
                 restartRequired: '需要重启服务器',
                 callCount: '调用次数',
                 lastCall: '最后调用',
@@ -105,6 +115,15 @@ class CommandCenter {
                 configTitle: 'System Config',
                 save: 'Save',
                 cancel: 'Cancel',
+                cfgWebuiHost: 'WebUI Host',
+                cfgWebuiPort: 'WebUI Port',
+                cfgMcpTransport: 'MCP Transport',
+                cfgMcpHost: 'MCP Host',
+                cfgMcpPort: 'MCP Port',
+                cfgMaxConcurrency: 'Max Concurrency',
+                cfgWorkingDir: 'Working Directory',
+                cfgLogLevel: 'Log Level',
+                browse: 'Browse',
                 restartRequired: 'Server restart required',
                 callCount: 'Call Count',
                 lastCall: 'Last Call',
@@ -135,13 +154,13 @@ class CommandCenter {
 
         this.toolI18n = {
             zh: {
-                dir_list: { desc: '列出目录内容，支持过滤和精简模式（最大深度5）', usage: '用法：列出目录内容。\n参数：path（路径），可选 max_depth（默认2，最大5），可选 include_hidden，可选 pattern（glob 如 "*.rs"），可选 brief（默认true），可选 sort_by（name/type/size/modified），可选 flatten（默认false，扁平列表）\n示例：{"path": "/home/user", "pattern": "*.rs", "brief": true}' },
-                file_read: { desc: '读取文本文件内容，支持行号和大范围读取', usage: '用法：读取文本文件。\n参数：path（路径），可选 start_line（默认0），可选 end_line（默认500），可选 offset_chars，可选 max_chars（默认15000），可选 line_numbers（默认true），可选 highlight_line（1-based，高亮标记）\n示例：{"path": "/home/user/file.txt", "start_line": 0, "end_line": 500}' },
+                dir_list: { desc: '列出目录内容，支持过滤和精简模式（最大深度5）。对文本文件自动返回字符数和行数', usage: '用法：列出目录内容。\n参数：path（路径），可选 max_depth（默认2，最大5），可选 include_hidden，可选 pattern（glob 如 "*.rs"），可选 brief（默认true），可选 sort_by（name/type/size/modified），可选 flatten（默认false，扁平列表）\n返回：对每个文件，若为 UTF-8 文本则包含 char_count 和 line_count\n示例：{"path": "/home/user", "pattern": "*.rs", "brief": true}' },
+                file_read: { desc: '并发读取一个或多个文本文件，每个文件可独立设置行号、范围等参数', usage: '用法：并发读取多个文本文件。\n参数：files（文件列表），每个文件项包含 path, 可选 start_line（默认0），可选 end_line（默认500），可选 offset_chars，可选 max_chars（默认15000），可选 line_numbers（默认true），可选 highlight_line（1-based）\n返回：每个文件一个结果对象，包含 success, content, lines_displayed, total_lines, truncated\n示例：{"files": [{"path": "a.txt", "start_line": 0, "end_line": 100}, {"path": "b.txt", "start_line": 0, "end_line": 50}]}' },
                 file_search: { desc: '搜索关键词并返回匹配片段及上下文（最大深度5）', usage: '用法：在文件或目录中搜索关键词。\n参数：path（路径），keyword（关键词），可选 file_pattern（glob），可选 use_regex（默认false），可选 max_results（默认20），可选 context_lines（默认3），可选 brief（默认false），可选 output_format（detailed/compact/location，默认detailed）\n示例：{"path": "/home/user/src", "keyword": "TODO", "context_lines": 3}' },
-                file_edit: { desc: '编辑文件，支持字符串替换、行号替换、插入、删除或补丁模式（危险操作）', usage: '用法：多模式编辑文件。\nstring_replace: path, old_string, new_string, 可选 occurrence（1=默认第一处，0=全部）\nline_replace: path, start_line, end_line, new_string\ninsert: path, start_line, new_string\ndelete: path, start_line, end_line\npatch: path, patch（unified diff 字符串）\n示例：{"path": "main.rs", "mode": "string_replace", "old_string": "fn old()", "new_string": "fn new()"} | {"path": "main.rs", "mode": "line_replace", "start_line": 10, "end_line": 15, "new_string": "new code"}' },
-                file_write: { desc: '将内容写入文件（危险操作）', usage: '用法：写入文件内容。\n参数：path（路径），content（内容），mode（new/append/overwrite）\n示例：{"path": "test.txt", "content": "Hello", "mode": "new"}' },
-                file_ops: { desc: '复制、移动、删除或重命名文件（危险操作）', usage: '用法：文件操作。\n参数：action（copy/move/delete/rename），source（源路径），target（目标路径或新名称），可选 overwrite（默认false）\n示例：{"action": "copy", "source": "a.txt", "target": "b.txt"} | {"action": "delete", "source": "file.txt"} | {"action": "rename", "source": "old.txt", "target": "new.txt"}' },
-                file_stat: { desc: '获取文件或目录的元数据（大小、权限、时间戳）', usage: '用法：获取文件元数据。\n参数：path（路径）\n返回：name, size, file_type, permissions, modified/created/accessed\n示例：{"path": "src/main.rs"}' },
+                file_edit: { desc: '并发编辑一个或多个文件，支持字符串替换、行号替换、插入、删除或补丁模式。string_replace/line_replace/insert 可自动创建新文件（危险操作）', usage: '用法：并发编辑多个文件。\n参数：operations（操作列表），每个操作包含 path, mode, 以及对应模式的参数。\nstring_replace: path, old_string, new_string, 可选 occurrence（1=默认第一处，0=全部）。若文件不存在且有 new_string，则创建新文件。\nline_replace: path, start_line, end_line, new_string。若文件不存在且有 new_string，则创建新文件。\ninsert: path, start_line, new_string。若文件不存在且有 new_string，则创建新文件。\ndelete: path, start_line, end_line\npatch: path, patch（unified diff 字符串）\n示例：{"operations": [{"path": "main.rs", "mode": "string_replace", "old_string": "fn old()", "new_string": "fn new()"}, {"path": "new.rs", "mode": "insert", "new_string": "fn main() {}"}]}' },
+                file_write: { desc: '并发将内容写入一个或多个文件（危险操作）', usage: '用法：并发写入多个文件。\n参数：files（文件列表），每个文件项包含 path, content, 可选 mode（new/append/overwrite，默认new）\n返回：每个文件一个结果对象，包含 success, message, bytes_written\n示例：{"files": [{"path": "test.txt", "content": "Hello", "mode": "new"}, {"path": "log.txt", "content": "Line", "mode": "append"}]}' },
+                file_ops: { desc: '并发复制、移动、删除或重命名一个或多个文件（危险操作）', usage: '用法：并发执行多个文件操作。\n参数：operations（操作列表），每个操作包含 action（copy/move/delete/rename），source，可选 target，可选 overwrite（默认false）\n返回：每个操作一个结果对象，包含 success, message\n示例：{"operations": [{"action": "copy", "source": "a.txt", "target": "b.txt"}, {"action": "delete", "source": "file.txt"}]}' },
+                file_stat: { desc: '并发获取一个或多个文件或目录的元数据。对文本文件额外返回字符数、行数和编码', usage: '用法：并发获取多个文件/目录的元数据。\n参数：paths（路径列表）\n返回：每个路径一个结果对象，包含 name, size, file_type, readable, writable, modified/created/accessed。对 UTF-8 文本文件额外包含 is_text, char_count, line_count, encoding\n示例：{"paths": ["src/main.rs", "Cargo.toml"]}' },
                 path_exists: { desc: '检查路径是否存在并返回其类型', usage: '用法：检查路径存在性。\n参数：path（路径）\n返回：exists (bool), path_type (file/dir/symlink/none)\n示例：{"path": "src/main.rs"}' },
                 json_query: { desc: '使用 JSON Pointer 语法查询 JSON 文件', usage: '用法：查询 JSON 文件。\n参数：path（JSON 文件路径），query（JSON Pointer 如 "/data/0/name"），可选 max_chars（默认15000）\n示例：{"path": "config.json", "query": "/database/host"}' },
                 git_ops: { desc: '在仓库中运行 git 命令（status, diff, log, branch, show）', usage: '用法：运行 git 命令。\n参数：action（status/diff/log/branch/show），可选 repo_path（默认工作目录），可选 options（额外参数数组）\n示例：{"action": "status"} | {"action": "log", "options": ["--oneline", "-n", "10"]}' },
@@ -155,15 +174,16 @@ class CommandCenter {
                 hash_compute: { desc: '计算字符串或文件的哈希值（MD5/SHA1/SHA256）', usage: '用法：计算哈希。\n参数：input（输入），algorithm（MD5/SHA1/SHA256）\n文件需前缀 "file:"\n示例：{"input": "hello", "algorithm": "SHA256"}' },
                 system_info: { desc: '获取系统信息', usage: '用法：获取系统信息。\n无需参数。\n示例：{}' },
                 env_get: { desc: '获取环境变量的值', usage: '用法：获取环境变量。\n参数：name（变量名）\n示例：{"name": "PATH"}' },
+                execute_python: { desc: '执行 Python 代码（默认沙箱模式，安全）。适用于精确计算、数据处理和逻辑评估', usage: '用法：执行 Python 代码。默认沙箱模式（禁止文件系统访问）。\n参数：code（Python 代码），可选 timeout_ms（默认5000，最大30000）\n将返回值赋给变量 __result。若未设置，最后一行将自动作为表达式求值。\n可用模块：math, random, statistics, datetime, itertools, functools, collections, re, string, json, fractions, decimal, typing, hashlib, base64, bisect, heapq, copy, pprint, enum, types, dataclasses, inspect, sys。\n通过 WebUI 上的"文件系统"开关可启用本地文件系统访问。\n示例：{"code": "import math\n__result = math.pi * 2"}' },
             },
             en: {
-                dir_list: { desc: 'List directory contents with filtering and brief mode (max depth 5)', usage: 'Usage: List directory contents.\nParameters: path, optional max_depth (default: 2, max: 5), optional include_hidden, optional pattern (glob e.g. "*.rs"), optional brief (default: true), optional sort_by (name/type/size/modified), optional flatten (default: false)\nExample: {"path": "/home/user", "pattern": "*.rs", "brief": true}' },
-                file_read: { desc: 'Read text file content with line numbers and large range support', usage: 'Usage: Read text file.\nParameters: path, optional start_line (default: 0), optional end_line (default: 500), optional offset_chars, optional max_chars (default: 15000), optional line_numbers (default: true), optional highlight_line (1-based)\nExample: {"path": "/home/user/file.txt", "start_line": 0, "end_line": 500}' },
+                dir_list: { desc: 'List directory contents with filtering and brief mode (max depth 5). Returns char_count and line_count for UTF-8 text files', usage: 'Usage: List directory contents.\nParameters: path, optional max_depth (default: 2, max: 5), optional include_hidden, optional pattern (glob e.g. "*.rs"), optional brief (default: true), optional sort_by (name/type/size/modified), optional flatten (default: false)\nReturns: For each file, if it is UTF-8 text, includes char_count and line_count\nExample: {"path": "/home/user", "pattern": "*.rs", "brief": true}' },
+                file_read: { desc: 'Read one or more text files concurrently, each with independent line/range settings', usage: 'Usage: Read multiple text files concurrently.\nParameters: files (list of file items), each with path, optional start_line (default: 0), optional end_line (default: 500), optional offset_chars, optional max_chars (default: 15000), optional line_numbers (default: true), optional highlight_line (1-based)\nReturns: One result object per file with success, content, lines_displayed, total_lines, truncated\nExample: {"files": [{"path": "a.txt", "start_line": 0, "end_line": 100}, {"path": "b.txt", "start_line": 0, "end_line": 50}]}' },
                 file_search: { desc: 'Search for keyword and return matching content fragments with context (max depth 5)', usage: 'Usage: Search for keyword.\nParameters: path, keyword, optional file_pattern (glob), optional use_regex (default: false), optional max_results (default: 20), optional context_lines (default: 3), optional brief (default: false), optional output_format (detailed/compact/location, default: detailed)\nExample: {"path": "/home/user/src", "keyword": "TODO", "context_lines": 3}' },
-                file_edit: { desc: 'Edit a file using string_replace, line_replace, insert, delete, or patch mode (dangerous operation)', usage: 'Usage: Multi-mode file editing.\nstring_replace: path, old_string, new_string, optional occurrence (1=first default, 0=all)\nline_replace: path, start_line, end_line, new_string\ninsert: path, start_line, new_string\ndelete: path, start_line, end_line\npatch: path, patch (unified diff string)\nExamples: {"path": "main.rs", "mode": "string_replace", "old_string": "fn old()", "new_string": "fn new()"} | {"path": "main.rs", "mode": "line_replace", "start_line": 10, "end_line": 15, "new_string": "new code"}' },
-                file_write: { desc: 'Write content to a file (dangerous operation)', usage: 'Usage: Write to file.\nParameters: path, content, mode (new/append/overwrite)\nExample: {"path": "test.txt", "content": "Hello", "mode": "new"}' },
-                file_ops: { desc: 'Copy, move, delete, or rename files (dangerous operation)', usage: 'Usage: File operations.\nParameters: action (copy/move/delete/rename), source (file path), target (target path or new name), optional overwrite (default: false)\nExamples: {"action": "copy", "source": "a.txt", "target": "b.txt"} | {"action": "delete", "source": "file.txt"} | {"action": "rename", "source": "old.txt", "target": "new.txt"}' },
-                file_stat: { desc: 'Get file or directory metadata (size, permissions, timestamps)', usage: 'Usage: Get file metadata.\nParameters: path\nReturns: name, size, file_type, permissions, modified/created/accessed timestamps\nExample: {"path": "src/main.rs"}' },
+                file_edit: { desc: 'Edit one or more files concurrently using string_replace, line_replace, insert, delete, or patch mode. string_replace/line_replace/insert can create new files (dangerous operation)', usage: 'Usage: Edit multiple files concurrently.\nParameters: operations (list of operations), each with path, mode, and mode-specific args.\nstring_replace: path, old_string, new_string, optional occurrence (1=first default, 0=all). Creates new file if not exists and new_string is provided.\nline_replace: path, start_line, end_line, new_string. Creates new file if not exists and new_string is provided.\ninsert: path, start_line, new_string. Creates new file if not exists and new_string is provided.\ndelete: path, start_line, end_line\npatch: path, patch (unified diff string)\nExample: {"operations": [{"path": "main.rs", "mode": "string_replace", "old_string": "fn old()", "new_string": "fn new()"}, {"path": "new.rs", "mode": "insert", "new_string": "fn main() {}"}]}' },
+                file_write: { desc: 'Write content to one or more files concurrently (dangerous operation)', usage: 'Usage: Write to multiple files concurrently.\nParameters: files (list of file items), each with path, content, optional mode (new/append/overwrite, default: new)\nReturns: One result object per file with success, message, bytes_written\nExample: {"files": [{"path": "test.txt", "content": "Hello", "mode": "new"}, {"path": "log.txt", "content": "Line", "mode": "append"}]}' },
+                file_ops: { desc: 'Copy, move, delete, or rename one or more files concurrently (dangerous operation)', usage: 'Usage: Perform multiple file operations concurrently.\nParameters: operations (list of operations), each with action (copy/move/delete/rename), source, optional target, optional overwrite (default: false)\nReturns: One result object per operation with success, message\nExample: {"operations": [{"action": "copy", "source": "a.txt", "target": "b.txt"}, {"action": "delete", "source": "file.txt"}]}' },
+                file_stat: { desc: 'Get metadata for one or more files or directories concurrently. Returns char_count, line_count, and encoding for UTF-8 text files', usage: 'Usage: Get metadata for multiple files/directories concurrently.\nParameters: paths (list of paths)\nReturns: One result object per path with name, size, file_type, readable, writable, modified/created/accessed. For UTF-8 text files, also includes is_text, char_count, line_count, encoding\nExample: {"paths": ["src/main.rs", "Cargo.toml"]}' },
                 path_exists: { desc: 'Check if a path exists and get its type', usage: 'Usage: Check path existence.\nParameters: path\nReturns: exists (bool), path_type (file/dir/symlink/none)\nExample: {"path": "src/main.rs"}' },
                 json_query: { desc: 'Query a JSON file using JSON Pointer syntax', usage: 'Usage: Query JSON file.\nParameters: path (JSON file), query (JSON Pointer like "/data/0/name"), optional max_chars (default: 15000)\nExample: {"path": "config.json", "query": "/database/host"}' },
                 git_ops: { desc: 'Run git commands (status, diff, log, branch, show) in a repository', usage: 'Usage: Run git commands.\nParameters: action (status/diff/log/branch/show), optional repo_path (default: working_dir), optional options (array of extra args)\nExample: {"action": "status"} | {"action": "log", "options": ["--oneline", "-n", "10"]}' },
@@ -177,6 +197,7 @@ class CommandCenter {
                 hash_compute: { desc: 'Compute hash of string or file (MD5, SHA1, SHA256)', usage: 'Usage: Compute hash.\nParameters: input, algorithm (MD5/SHA1/SHA256)\nFor files, prefix path with "file:"\nExample: {"input": "hello", "algorithm": "SHA256"}' },
                 system_info: { desc: 'Get system information', usage: 'Usage: Get system information.\nNo parameters required.\nExample: {}' },
                 env_get: { desc: 'Get the value of an environment variable', usage: 'Usage: Get environment variable.\nParameters: name\nExample: {"name": "PATH"}' },
+                execute_python: { desc: 'Execute Python code (sandboxed by default, safe). Useful for precise calculations, data processing, and logic evaluation', usage: 'Usage: Execute Python code. Sandboxed by default (no filesystem access).\nParameters: code (Python code), optional timeout_ms (default: 5000, max: 30000)\nAssign the return value to __result. If not set, the last line is automatically evaluated as an expression.\nAvailable modules: math, random, statistics, datetime, itertools, functools, collections, re, string, json, fractions, decimal, typing, hashlib, base64, bisect, heapq, copy, pprint, enum, types, dataclasses, inspect, sys.\nEnable local filesystem access via the WebUI "Filesystem" toggle.\nExample: {"code": "import math\n__result = math.pi * 2"}' },
             }
         };
 
@@ -484,9 +505,10 @@ class CommandCenter {
     // ============================================================
     async loadData() {
         try {
-            const [toolsRes, configRes] = await Promise.all([
+            const [toolsRes, configRes, fsRes] = await Promise.all([
                 fetch('/api/tools'),
-                fetch('/api/config')
+                fetch('/api/config'),
+                fetch('/api/python-fs-access')
             ]);
             if (toolsRes.ok) {
                 const toolsData = await toolsRes.json();
@@ -498,6 +520,10 @@ class CommandCenter {
             if (configRes.ok) {
                 this.config = await configRes.json();
                 this.renderConfig();
+            }
+            if (fsRes.ok) {
+                const fsData = await fsRes.json();
+                this.pythonFsAccessEnabled = fsData.enabled || false;
             }
             this.render();
         } catch (err) {
@@ -602,6 +628,28 @@ class CommandCenter {
         document.getElementById('save-config-btn')?.addEventListener('click', () => this.saveConfig());
         document.getElementById('cancel-config-btn')?.addEventListener('click', () => this.closeModal('config-modal'));
 
+        // Working directory picker
+        document.getElementById('browse-working-dir')?.addEventListener('click', () => {
+            document.getElementById('working-dir-picker')?.click();
+        });
+        document.getElementById('working-dir-picker')?.addEventListener('change', (e) => {
+            const files = e.target.files;
+            if (files && files.length > 0) {
+                // webkitdirectory returns files; use the first file's path logic
+                const path = files[0].path || files[0].name;
+                // Try to derive directory from full path if available (Electron/Tauri) or use name
+                const dirInput = document.getElementById('cfg-working-dir');
+                if (dirInput) {
+                    // For web browsers, webkitdirectory doesn't give full path due to security.
+                    // We use a heuristic: if path contains separator, take dirname.
+                    const lastSep = path.lastIndexOf('/');
+                    const lastSepWin = path.lastIndexOf('\\');
+                    const sepIdx = Math.max(lastSep, lastSepWin);
+                    dirInput.value = sepIdx > 0 ? path.substring(0, sepIdx) : path;
+                }
+            }
+        });
+
         // Tool modal close
         document.getElementById('close-tool-modal')?.addEventListener('click', () => this.closeModal('tool-modal'));
         document.getElementById('close-tool-modal-btn')?.addEventListener('click', () => this.closeModal('tool-modal'));
@@ -621,11 +669,13 @@ class CommandCenter {
     closeModal(id) {
         document.getElementById(id)?.classList.remove('show');
         this.bgAnimationPaused = false;
+        document.body.classList.remove('modal-open');
     }
 
     openModal(id) {
         document.getElementById(id)?.classList.add('show');
         this.bgAnimationPaused = true;
+        document.body.classList.add('modal-open');
     }
 
     // ============================================================
@@ -654,6 +704,22 @@ class CommandCenter {
             if (!res.ok) throw new Error('Failed');
             const tool = this.tools.find(t => t.name === name);
             if (tool) { tool.enabled = enable; this.render(); }
+        } catch (err) {
+            this.showError(this.t('connectionError'));
+        }
+    }
+
+    async togglePythonFsAccess(enabled) {
+        try {
+            const res = await fetch('/api/python-fs-access', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ enabled })
+            });
+            if (!res.ok) throw new Error('Failed');
+            this.pythonFsAccessEnabled = enabled;
+            this.render();
+            this.showSuccess(enabled ? 'Filesystem access enabled' : 'Filesystem access disabled');
         } catch (err) {
             this.showError(this.t('connectionError'));
         }
@@ -871,18 +937,18 @@ class CommandCenter {
         if (!grid) return;
 
         const fields = [
-            ['webui_host', this.config.webui_host],
-            ['webui_port', this.config.webui_port],
-            ['mcp_transport', this.config.mcp_transport],
-            ['mcp_host', this.config.mcp_host],
-            ['mcp_port', this.config.mcp_port],
-            ['max_concurrency', this.config.max_concurrency],
-            ['working_dir', this.config.working_dir],
-            ['log_level', this.config.log_level],
+            ['cfgWebuiHost', this.config.webui_host],
+            ['cfgWebuiPort', this.config.webui_port],
+            ['cfgMcpTransport', this.config.mcp_transport],
+            ['cfgMcpHost', this.config.mcp_host],
+            ['cfgMcpPort', this.config.mcp_port],
+            ['cfgMaxConcurrency', this.config.max_concurrency],
+            ['cfgWorkingDir', this.config.working_dir],
+            ['cfgLogLevel', this.config.log_level],
         ];
         grid.innerHTML = fields.map(([key, val]) => `
             <div class="config-item">
-                <label>${key}</label>
+                <label>${this.t(key)}</label>
                 <div class="config-value">${val !== undefined ? val : 'N/A'}</div>
             </div>
         `).join('');
@@ -1078,10 +1144,19 @@ class CommandCenter {
             });
         });
 
+        // Re-bind fs-access toggles
+        document.querySelectorAll('input[data-toggle="fs-access"]').forEach(input => {
+            input.addEventListener('change', (e) => {
+                e.stopPropagation();
+                this.togglePythonFsAccess(e.target.checked);
+            });
+        });
+
         // Re-bind card click for info
         document.querySelectorAll('.tool-card[data-tool]').forEach(card => {
             card.addEventListener('click', (e) => {
                 if (e.target.closest('.tool-toggle-btn')) return;
+                if (e.target.closest('.tool-fs-toggle')) return;
                 this.openToolModal(card.dataset.tool);
             });
         });
@@ -1092,6 +1167,15 @@ class CommandCenter {
         const statusText = tool.is_calling ? this.t('calling') : this.t('idle');
         const dotClass = tool.enabled ? (tool.is_calling ? 'calling' : '') : 'disabled';
         const description = this.getToolDescription(tool.name);
+        const fsToggle = tool.name === 'execute_python' ? `
+            <div class="tool-fs-toggle">
+                <span class="fs-toggle-label">${this.lang === 'zh' ? '文件系统' : 'Filesystem'}</span>
+                <label class="neon-switch small">
+                    <input type="checkbox" data-tool="execute_python" data-toggle="fs-access" ${this.pythonFsAccessEnabled ? 'checked' : ''}>
+                    <span class="slider"></span>
+                </label>
+            </div>
+        ` : '';
 
         return `
             <div class="tool-card ${tool.is_dangerous ? 'dangerous' : ''} ${!tool.enabled ? 'disabled' : ''}" data-tool="${tool.name}">
@@ -1112,6 +1196,7 @@ class CommandCenter {
                         <span class="tool-stat-label">${this.t('calls')}:</span>
                         <span class="tool-stat-value">${tool.call_count || 0}</span>
                     </div>
+                    ${fsToggle}
                 </div>
                 <div class="tool-footer">
                     <span class="tool-status ${statusClass}">${statusText}</span>
@@ -1207,6 +1292,16 @@ class CommandCenter {
 
         const btnCancelRestart = document.getElementById('cancel-restart');
         if (btnCancelRestart) btnCancelRestart.textContent = this.t('cancel');
+
+        // Config form labels
+        document.querySelectorAll('#config-form [data-i18n-key]').forEach(el => {
+            const key = el.getAttribute('data-i18n-key');
+            if (key) el.textContent = this.t(key);
+        });
+
+        // Browse button
+        const browseBtn = document.getElementById('browse-working-dir');
+        if (browseBtn) browseBtn.textContent = this.t('browse');
     }
 
     showError(msg) {

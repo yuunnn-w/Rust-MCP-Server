@@ -23,6 +23,42 @@ pub fn glob_match(pattern: &str, name: &str) -> bool {
         .unwrap_or(false)
 }
 
+/// Strip Windows UNC prefix (`\\?\`) from path strings.
+/// On non-Windows platforms this is a no-op.
+pub fn strip_unc_prefix(path_str: &str) -> String {
+    if path_str.starts_with("\\\\?\\") {
+        path_str[4..].to_string()
+    } else {
+        path_str.to_string()
+    }
+}
+
+/// Information about a text file.
+#[derive(Debug, Clone)]
+pub struct TextFileInfo {
+    pub char_count: usize,
+    pub line_count: usize,
+}
+
+/// Try to read a file and decode it as UTF-8 text (async).
+/// Returns `Some(TextFileInfo)` if successful, `None` if the file is binary or unreadable.
+pub async fn get_text_file_info(path: &Path) -> Option<TextFileInfo> {
+    let bytes = tokio::fs::read(path).await.ok()?;
+    let text = String::from_utf8(bytes).ok()?;
+    let char_count = text.chars().count();
+    let line_count = text.lines().count();
+    Some(TextFileInfo { char_count, line_count })
+}
+
+/// Synchronous version of `get_text_file_info`.
+pub fn get_text_file_info_sync(path: &Path) -> Option<TextFileInfo> {
+    let bytes = std::fs::read(path).ok()?;
+    let text = String::from_utf8(bytes).ok()?;
+    let char_count = text.chars().count();
+    let line_count = text.lines().count();
+    Some(TextFileInfo { char_count, line_count })
+}
+
 /// Format file size to human readable string
 pub fn format_file_size(size: u64) -> String {
     const UNITS: &[&str] = &["B", "KB", "MB", "GB", "TB"];
@@ -290,6 +326,26 @@ fn normalize_path(path: &Path) -> PathBuf {
         }
     }
     result
+}
+
+/// Resolve a path to its canonical or absolute form without enforcing working directory restriction.
+/// Used by read-only tools that are allowed to access any path on the filesystem.
+pub fn resolve_path(path: &Path, working_dir: &Path) -> Result<PathBuf, String> {
+    // Try to canonicalize the path (works if path exists)
+    match path.canonicalize() {
+        Ok(p) => Ok(p),
+        Err(_) => {
+            // Path doesn't exist, resolve it relative to working dir if relative
+            if path.is_absolute() {
+                Ok(path.to_path_buf())
+            } else {
+                let canonical_working = working_dir
+                    .canonicalize()
+                    .map_err(|e| format!("Invalid working directory '{}': {}", working_dir.display(), e))?;
+                Ok(canonical_working.join(path))
+            }
+        }
+    }
 }
 
 /// Safe path join that prevents directory traversal

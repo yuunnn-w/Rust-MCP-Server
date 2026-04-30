@@ -1,4 +1,7 @@
-use crate::utils::file_utils::{ensure_path_within_working_dir, format_datetime, format_file_size, glob_match, should_skip_dir};
+use crate::utils::file_utils::{
+    format_datetime, format_file_size, get_text_file_info_sync,
+    glob_match, resolve_path, should_skip_dir, strip_unc_prefix,
+};
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::model::CallToolResult;
 use rmcp::schemars::JsonSchema;
@@ -43,6 +46,10 @@ struct FileEntry {
     #[serde(skip_serializing_if = "Option::is_none")]
     modified: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    char_count: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    line_count: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     children: Option<Vec<FileEntry>>,
 }
 
@@ -70,7 +77,6 @@ struct Summary {
     max_depth_reached: bool,
 }
 
-
 pub async fn dir_list(
     params: Parameters<DirListParams>,
     working_dir: &Path,
@@ -84,7 +90,7 @@ pub async fn dir_list(
     let flatten = params.flatten.unwrap_or(false);
 
     let path = Path::new(&params.path);
-    let canonical_path = ensure_path_within_working_dir(path, working_dir)?;
+    let canonical_path = resolve_path(path, working_dir)?;
 
     if !canonical_path.exists() {
         return Err(format!("Path '{}' does not exist", params.path));
@@ -118,10 +124,11 @@ pub async fn dir_list(
 
         let metadata = std::fs::metadata(&canonical_path).ok();
         DirListResponse {
-            name: canonical_path.file_name()
+            name: canonical_path
+                .file_name()
                 .map(|n| n.to_string_lossy().to_string())
                 .unwrap_or_else(|| canonical_path.to_string_lossy().to_string()),
-            path: canonical_path.to_string_lossy().to_string(),
+            path: strip_unc_prefix(&canonical_path.to_string_lossy()),
             is_dir: true,
             size: None,
             modified: metadata.and_then(|m| m.modified().ok()).map(format_datetime),
@@ -202,7 +209,8 @@ fn list_directory_flat(
             continue;
         }
 
-        if item.path().is_dir() && should_skip_dir(&name_str) {
+        let item_is_dir = item.file_type()?.is_dir();
+        if item_is_dir && should_skip_dir(&name_str) {
             continue;
         }
 
@@ -234,13 +242,23 @@ fn list_directory_flat(
             metadata.modified().ok().map(format_datetime)
         };
 
+        let (char_count, line_count) = if !is_dir {
+            get_text_file_info_sync(&entry_path)
+                .map(|info| (Some(info.char_count), Some(info.line_count)))
+                .unwrap_or((None, None))
+        } else {
+            (None, None)
+        };
+
         entries.push(FileEntry {
             name: name_str.to_string(),
-            path: rel_path.to_string_lossy().to_string(),
+            path: strip_unc_prefix(&rel_path.to_string_lossy()),
             is_dir,
             depth: Some(current_depth),
             size,
             modified,
+            char_count,
+            line_count,
             children: None,
         });
 
@@ -303,13 +321,23 @@ fn list_directory_recursive(
         metadata.modified().ok().map(format_datetime)
     };
 
+    let (char_count, line_count) = if !is_dir {
+        get_text_file_info_sync(path)
+            .map(|info| (Some(info.char_count), Some(info.line_count)))
+            .unwrap_or((None, None))
+    } else {
+        (None, None)
+    };
+
     let mut entry = FileEntry {
         name,
-        path: path.to_string_lossy().to_string(),
+        path: strip_unc_prefix(&path.to_string_lossy()),
         is_dir,
         depth: None,
         size,
         modified,
+        char_count,
+        line_count,
         children: None,
     };
 
@@ -329,7 +357,8 @@ fn list_directory_recursive(
             }
 
             // Skip known noise directories
-            if is_dir && should_skip_dir(&name_str) {
+            let item_is_dir = item.file_type()?.is_dir();
+            if item_is_dir && should_skip_dir(&name_str) {
                 continue;
             }
 
@@ -395,8 +424,12 @@ fn sort_entries(children: &mut Vec<FileEntry>, sort_by: &str, base_path: Option<
             _ => a.name.cmp(&b.name),
         },
         "size" => {
-            let path_a = base_path.map(|bp| bp.join(&a.path)).unwrap_or_else(|| PathBuf::from(&a.path));
-            let path_b = base_path.map(|bp| bp.join(&b.path)).unwrap_or_else(|| PathBuf::from(&b.path));
+            let path_a = base_path
+                .map(|bp| bp.join(&a.path))
+                .unwrap_or_else(|| PathBuf::from(&a.path));
+            let path_b = base_path
+                .map(|bp| bp.join(&b.path))
+                .unwrap_or_else(|| PathBuf::from(&b.path));
             let size_a = std::fs::metadata(&path_a).map(|m| m.len()).unwrap_or(0);
             let size_b = std::fs::metadata(&path_b).map(|m| m.len()).unwrap_or(0);
             match (a.is_dir, b.is_dir) {
@@ -406,8 +439,12 @@ fn sort_entries(children: &mut Vec<FileEntry>, sort_by: &str, base_path: Option<
             }
         }
         "modified" => {
-            let path_a = base_path.map(|bp| bp.join(&a.path)).unwrap_or_else(|| PathBuf::from(&a.path));
-            let path_b = base_path.map(|bp| bp.join(&b.path)).unwrap_or_else(|| PathBuf::from(&b.path));
+            let path_a = base_path
+                .map(|bp| bp.join(&a.path))
+                .unwrap_or_else(|| PathBuf::from(&a.path));
+            let path_b = base_path
+                .map(|bp| bp.join(&b.path))
+                .unwrap_or_else(|| PathBuf::from(&b.path));
             let time_a = std::fs::metadata(&path_a).and_then(|m| m.modified()).ok();
             let time_b = std::fs::metadata(&path_b).and_then(|m| m.modified()).ok();
             match (a.is_dir, b.is_dir) {
@@ -416,7 +453,7 @@ fn sort_entries(children: &mut Vec<FileEntry>, sort_by: &str, base_path: Option<
                 _ => match (time_b, time_a) {
                     (Some(tb), Some(ta)) => tb.cmp(&ta).then_with(|| a.name.cmp(&b.name)),
                     _ => a.name.cmp(&b.name),
-                }
+                },
             }
         }
         _ => {
@@ -443,7 +480,7 @@ mod tests {
 
         fs::create_dir(dir_path.join("subdir")).unwrap();
         fs::write(dir_path.join("file1.txt"), "content1").unwrap();
-        fs::write(dir_path.join("subdir/file2.txt"), "content2").unwrap();
+        fs::write(dir_path.join("subdir/file2.txt"), "content2\nline2").unwrap();
 
         let params = DirListParams {
             path: dir_path.to_string_lossy().to_string(),
@@ -457,6 +494,15 @@ mod tests {
 
         let result = dir_list(Parameters(params), temp_dir.path()).await;
         assert!(result.is_ok());
+
+        if let Ok(ref call_result) = result {
+            if let Some(text) = call_result.content.first().and_then(|c| c.as_text()) {
+                // Check UNC prefix is stripped
+                assert!(!text.text.contains("\\\\?\\"));
+                // Check text file info is present
+                assert!(text.text.contains("char_count") || text.text.contains("line_count"));
+            }
+        }
     }
 
     #[tokio::test]

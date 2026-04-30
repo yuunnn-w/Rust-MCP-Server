@@ -1,4 +1,4 @@
-use crate::utils::file_utils::{ensure_path_within_working_dir, glob_match, is_text_file, should_skip_dir};
+use crate::utils::file_utils::{glob_match, is_text_file, resolve_path, should_skip_dir};
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::model::CallToolResult;
 use rmcp::schemars::JsonSchema;
@@ -259,7 +259,7 @@ pub async fn file_search(
         return Err("Keyword cannot be empty".to_string());
     }
 
-    let canonical_path = ensure_path_within_working_dir(path, working_dir)?;
+    let canonical_path = resolve_path(path, working_dir)?;
 
     if !canonical_path.exists() {
         return Err(format!("Path '{}' does not exist", params.path));

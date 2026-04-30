@@ -14,8 +14,9 @@
 │  │  │ Files     │  │  │  │ HTTP/SSE │   │  │  │ file_read     │  │  │
 │  │  └───────────┘  │  │  │ Transport│   │  │  │ file_write    │  │  │
 │  │  ┌───────────┐  │  │  └──────────┘   │  │  │ execute_cmd   │  │  │
+│  │  │ execute_python│  │  │
 │  │  │ REST API  │  │  │                 │  │  │ calculator    │  │  │
-│  │  │ /api/*    │  │  │                 │  │  │ ... (20 tools)│  │  │
+│  │  │ /api/*    │  │  │                 │  │  │ ... (21 tools)│  │  │
 │  │  └───────────┘  │  │                 │  │  └───────────────┘  │  │
 │  │  ┌───────────┐  │  │                 │  │                     │  │
 │  │  │ SSE       │  │  │                 │  │                     │  │
@@ -62,6 +63,8 @@ The WebUI provides a modern control panel for managing the MCP server.
 - `POST /api/mcp/start` - Start MCP service
 - `POST /api/mcp/stop` - Stop MCP service
 - `POST /api/mcp/restart` - Restart MCP service
+- `GET /api/python-fs-access` - Get `execute_python` filesystem access status
+- `POST /api/python-fs-access` - Toggle `execute_python` filesystem access
 
 **Default Bind Address**: `127.0.0.1:2233`
 
@@ -82,33 +85,34 @@ Implements the Model Context Protocol using the `rmcp` crate.
 
 ### Tool Registry
 
-20 built-in tools organized by category:
+21 built-in tools organized by category:
 
 #### File Operations (8 tools)
-| Tool | Description | Dangerous |
-|------|-------------|-----------|
-| `dir_list` | List directory contents with tree structure (max depth 5) | No |
-| `file_read` | Read text file content with line range support | No |
-| `file_search` | Search for keyword in file or directory (max depth 5) | No |
-| `file_write` | Write content to file (create/append/overwrite) | Yes |
-| `file_ops` | Copy, move, delete, or rename files | Yes |
-| `file_edit` | Multi-mode file editing (string_replace, line_replace, insert, delete, patch) | Yes |
-| `file_stat` | Get file/directory metadata (size, permissions, timestamps) | No |
-| `path_exists` | Lightweight path existence check | No |
+| Tool | Description | Dangerous | Working Dir Restriction |
+|------|-------------|-----------|------------------------|
+| `dir_list` | List directory contents with tree structure (max depth 5). Returns char_count and line_count for UTF-8 text files | No | No |
+| `file_read` | Read one or more text files concurrently with line range support | No | No |
+| `file_search` | Search for keyword in file or directory (max depth 5) | No | No |
+| `file_write` | Write content to one or more files concurrently (create/append/overwrite) | Yes | Yes |
+| `file_ops` | Copy, move, delete, or rename one or more files concurrently | Yes | Yes |
+| `file_edit` | Edit one or more files concurrently (string_replace, line_replace, insert, delete, patch). Can create new files | Yes | Yes |
+| `file_stat` | Get metadata for one or more files/directories concurrently. Returns text file info for UTF-8 files | No | No |
+| `path_exists` | Lightweight path existence check | No | No |
 
 #### Query & Environment Tools (3 tools)
-| Tool | Description | Dangerous |
-|------|-------------|-----------|
-| `json_query` | Query a JSON file using JSON Pointer syntax | No |
-| `git_ops` | Run git commands in a repository | No |
-| `env_get` | Get the value of an environment variable | No |
+| Tool | Description | Dangerous | Working Dir Restriction |
+|------|-------------|-----------|------------------------|
+| `json_query` | Query a JSON file using JSON Pointer syntax | No | No |
+| `git_ops` | Run git commands in a repository | No | No |
+| `env_get` | Get the value of an environment variable | No | No |
 
-#### System Tools (3 tools)
-| Tool | Description | Dangerous |
-|------|-------------|-----------|
-| `process_list` | List system processes | No |
-| `system_info` | Get system information | No |
-| `execute_command` | Execute shell command in specified directory | Yes |
+#### System Tools (4 tools)
+| Tool | Description | Dangerous | Working Dir Restriction |
+|------|-------------|-----------|------------------------|
+| `process_list` | List system processes | No | No |
+| `system_info` | Get system information | No | No |
+| `execute_command` | Execute shell command in specified directory | Yes | Yes |
+| `execute_python` | Execute Python code in a sandboxed environment (filesystem access toggleable) | No | Yes (when fs access enabled) |
 
 #### Utility Tools (4 tools)
 | Tool | Description | Dangerous |
@@ -119,10 +123,10 @@ Implements the Model Context Protocol using the `rmcp` crate.
 | `hash_compute` | Compute hash (MD5, SHA1, SHA256) of string or file | No |
 
 #### Network & Image Tools (2 tools)
-| Tool | Description | Dangerous |
-|------|-------------|-----------|
-| `http_request` | Make HTTP GET or POST requests | No |
-| `image_read` | Read image file and return MCP-standard ImageContent + TextContent metadata | No |
+| Tool | Description | Dangerous | Working Dir Restriction |
+|------|-------------|-----------|------------------------|
+| `http_request` | Make HTTP GET or POST requests | No | No |
+| `image_read` | Read image file and return MCP-standard ImageContent + TextContent metadata | No | No |
 
 ### Resources
 
@@ -237,7 +241,7 @@ file_write,file_ops,file_edit,http_request,datetime,
 execute_command,process_list,base64_codec,hash_compute,system_info
 ```
 
-The following 10 tools are enabled by default: `calculator`, `dir_list`, `file_read`, `file_search`, `image_read`, `file_stat`, `path_exists`, `json_query`, `git_ops`, `env_get`.
+The following 11 tools are enabled by default: `calculator`, `dir_list`, `file_read`, `file_search`, `image_read`, `file_stat`, `path_exists`, `json_query`, `git_ops`, `env_get`, `execute_python`.
 
 ## Technology Stack
 

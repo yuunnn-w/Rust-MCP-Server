@@ -42,7 +42,7 @@ fn tool_result(result: Result<CallToolResult, String>) -> Result<CallToolResult,
 
 #[tool_router]
 impl McpHandler {
-    #[tool(description = "List directory contents with filtering (max depth 5)")]
+    #[tool(description = "List directory contents with filtering (max depth 5). Returns text file char_count and line_count for UTF-8 files. Not restricted to working directory.")]
     async fn dir_list(
         &self,
         params: Parameters<dir_list::DirListParams>,
@@ -51,7 +51,7 @@ impl McpHandler {
         tool_result(dir_list::dir_list(params, &working_dir).await)
     }
 
-    #[tool(description = "Read text file with line numbers and range support")]
+    #[tool(description = "Read one or more text files concurrently with line numbers and range support. Accepts a list of file items. Not restricted to working directory.")]
     async fn file_read(
         &self,
         params: Parameters<file_read::FileReadParams>,
@@ -60,7 +60,7 @@ impl McpHandler {
         tool_result(file_read::file_read(params, &working_dir).await)
     }
 
-    #[tool(description = "Search keyword in files with context (max depth 5)")]
+    #[tool(description = "Search keyword in files with context (max depth 5). Not restricted to working directory.")]
     async fn file_search(
         &self,
         params: Parameters<file_search::FileSearchParams>,
@@ -69,7 +69,7 @@ impl McpHandler {
         tool_result(file_search::file_search(params, &working_dir).await)
     }
 
-    #[tool(description = "Edit file using string_replace, line_replace, insert, delete, or patch mode")]
+    #[tool(description = "Edit one or more files concurrently using string_replace, line_replace, insert, delete, or patch mode. Can create new files with string_replace/line_replace/insert.")]
     async fn file_edit(
         &self,
         params: Parameters<file_edit::FileEditParams>,
@@ -78,7 +78,7 @@ impl McpHandler {
         tool_result(file_edit::file_edit(params, &working_dir).await)
     }
 
-    #[tool(description = "Write content to file (create/append/overwrite)")]
+    #[tool(description = "Write content to one or more files concurrently (create/append/overwrite). Accepts a list of file items.")]
     async fn file_write(
         &self,
         params: Parameters<file_write::FileWriteParams>,
@@ -87,7 +87,7 @@ impl McpHandler {
         tool_result(file_write::file_write(params, &working_dir).await)
     }
 
-    #[tool(description = "Copy, move, delete, or rename files")]
+    #[tool(description = "Copy, move, delete, or rename one or more files concurrently. Accepts a list of operations.")]
     async fn file_ops(
         &self,
         params: Parameters<file_ops::FileOpsParams>,
@@ -96,7 +96,7 @@ impl McpHandler {
         tool_result(file_ops::file_ops(params, &working_dir).await)
     }
 
-    #[tool(description = "Get file or directory metadata (size, permissions, timestamps)")]
+    #[tool(description = "Get metadata for one or more files or directories concurrently. Returns is_text, char_count, line_count, and encoding for UTF-8 files. Not restricted to working directory.")]
     async fn file_stat(
         &self,
         params: Parameters<file_stat::FileStatParams>,
@@ -105,7 +105,7 @@ impl McpHandler {
         tool_result(file_stat::file_stat(params, &working_dir).await)
     }
 
-    #[tool(description = "Check if a path exists and get its type")]
+    #[tool(description = "Check if a path exists and get its type. Not restricted to working directory.")]
     async fn path_exists(
         &self,
         params: Parameters<path_exists::PathExistsParams>,
@@ -114,7 +114,7 @@ impl McpHandler {
         tool_result(path_exists::path_exists(params, &working_dir).await)
     }
 
-    #[tool(description = "Query a JSON file using JSON Pointer syntax")]
+    #[tool(description = "Query a JSON file using JSON Pointer syntax. Not restricted to working directory.")]
     async fn json_query(
         &self,
         params: Parameters<json_query::JsonQueryParams>,
@@ -123,7 +123,7 @@ impl McpHandler {
         tool_result(json_query::json_query(params, &working_dir).await)
     }
 
-    #[tool(description = "Run git commands (status, diff, log, branch, show) in a repository")]
+    #[tool(description = "Run git commands (status, diff, log, branch, show) in a repository. Not restricted to working directory.")]
     async fn git_ops(
         &self,
         params: Parameters<git_ops::GitOpsParams>,
@@ -153,7 +153,7 @@ impl McpHandler {
         tool_result(datetime::datetime().await)
     }
 
-    #[tool(description = "Read image and return base64 or metadata")]
+    #[tool(description = "Read image and return base64 or metadata. Not restricted to working directory.")]
     async fn image_read(
         &self,
         params: Parameters<image_read::ImageReadParams>,
@@ -185,7 +185,7 @@ impl McpHandler {
         tool_result(base64_codec::base64_codec(params).await)
     }
 
-    #[tool(description = "Compute hash (MD5, SHA1, SHA256)")]
+    #[tool(description = "Compute hash (MD5, SHA1, SHA256). Not restricted to working directory.")]
     async fn hash_compute(
         &self,
         params: Parameters<hash_computer::HashComputeParams>,
@@ -205,6 +205,16 @@ impl McpHandler {
         params: Parameters<env_get::EnvGetParams>,
     ) -> Result<CallToolResult, McpError> {
         tool_result(env_get::env_get(params).await)
+    }
+
+    #[tool(description = "Execute Python code for calculations, data processing, and logic evaluation. Set __result for return value. Available modules: math, random, statistics, datetime, itertools, functools, collections, re, string, json, fractions, decimal, typing, hashlib, base64, bisect, heapq, copy, pprint, enum, types, dataclasses, inspect, sys. Filesystem access is controlled by a separate toggle.")]
+    async fn execute_python(
+        &self,
+        params: Parameters<execute_python::ExecutePythonParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let working_dir = self.get_working_dir().await;
+        let allow_fs = self.state.is_python_fs_access_enabled().await;
+        tool_result(execute_python::execute_python(params, &working_dir, allow_fs).await)
     }
 }
 
@@ -418,8 +428,9 @@ impl ServerHandler for McpHandler {
     ) -> Result<ListToolsResult, McpError> {
         let all_tools = self.tool_router.list_all();
         let total_count = all_tools.len();
+        let allow_fs = self.state.is_python_fs_access_enabled().await;
         
-        let tools: Vec<Tool> = all_tools
+        let mut tools: Vec<Tool> = all_tools
             .into_iter()
             .filter(|tool| {
                 self.state.tool_status.get(&tool.name.to_string())
@@ -427,6 +438,19 @@ impl ServerHandler for McpHandler {
                     .unwrap_or(true)
             })
             .collect();
+        
+        // Dynamically update execute_python description based on fs access status
+        for tool in &mut tools {
+            if tool.name.as_ref() == "execute_python" {
+                let base_desc = "Execute Python code for calculations, data processing, and logic evaluation. Set __result for return value. Available modules: math, random, statistics, datetime, itertools, functools, collections, re, string, json, fractions, decimal, typing, hashlib, base64, bisect, heapq, copy, pprint, enum, types, dataclasses, inspect, sys.";
+                let suffix = if allow_fs {
+                    " Filesystem access is currently ENABLED."
+                } else {
+                    " Filesystem access is currently DISABLED (sandboxed)."
+                };
+                tool.description = Some(std::borrow::Cow::Owned(format!("{}{}", base_desc, suffix)));
+            }
+        }
         
         info!("Listing {} enabled tools ({} total)", tools.len(), total_count);
         Ok(ListToolsResult {

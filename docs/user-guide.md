@@ -67,7 +67,7 @@ The WebUI provides a Cyberpunk AI Command Center:
 
 ### Enabling/Disabling Tools
 
-**Important:** By default, 10 tools are enabled for security: `calculator`, `dir_list`, `file_read`, `file_search`, `image_read`, `file_stat`, `path_exists`, `json_query`, `git_ops`, and `env_get`.
+**Important:** By default, 11 tools are enabled for security: `calculator`, `dir_list`, `file_read`, `file_search`, `image_read`, `file_stat`, `path_exists`, `json_query`, `git_ops`, `env_get`, and `execute_python`.
 
 1. Open WebUI at `http://127.0.0.1:2233`
 2. Find the tool card in the grid
@@ -118,49 +118,70 @@ List directory contents with tree structure or flat list.
 ```
 
 #### file_read
-Read text file content with line range support.
+Read one or more text files concurrently with line range support.
 
 **Parameters:**
-- `path` (string): File path
-- `start_line` (number, optional): Start line (0-indexed, default: 0)
-- `end_line` (number, optional): End line (default: 500)
-- `offset_chars` (number, optional): Character offset to start reading (alternative to start_line)
-- `max_chars` (number, optional): Maximum characters to return (default: 15000)
-- `line_numbers` (boolean, optional): Prefix each line with its line number (default: true)
-- `highlight_line` (number, optional): Highlight a specific line with `>>>` marker (1-based)
+- `files` (array): List of files to read
+  - `path` (string): File path
+  - `start_line` (number, optional): Start line (0-indexed, default: 0)
+  - `end_line` (number, optional): End line (default: 500)
+  - `offset_chars` (number, optional): Character offset to start reading (alternative to start_line)
+  - `max_chars` (number, optional): Maximum characters to return (default: 15000)
+  - `line_numbers` (boolean, optional): Prefix each line with its line number (default: true)
+  - `highlight_line` (number, optional): Highlight a specific line with `>>>` marker (1-based)
 
 **Features:**
+- Read multiple files concurrently
 - 15KB character limit per read (configurable via `max_chars`)
 - Automatic truncation with precise continuation hints
-- Returns total line count
+- Returns total line count per file
 - Line number prefixing for easy reference
 - Highlight line for pinpointing search results
 
 **Example:**
 ```json
 {
-  "path": "config.json",
-  "start_line": 0,
-  "end_line": 500,
-  "line_numbers": true,
-  "highlight_line": 42
+  "files": [
+    {
+      "path": "config.json",
+      "start_line": 0,
+      "end_line": 500,
+      "line_numbers": true,
+      "highlight_line": 42
+    },
+    {
+      "path": "src/main.rs",
+      "start_line": 0,
+      "end_line": 100
+    }
+  ]
 }
 ```
 
 #### file_write
-Write content to file (dangerous).
+Write content to one or more files concurrently (dangerous).
 
 **Parameters:**
-- `path` (string): File path
-- `content` (string): Content to write
-- `mode` (string, optional): "new" | "append" | "overwrite" (default: "new")
+- `files` (array): List of files to write
+  - `path` (string): File path
+  - `content` (string): Content to write
+  - `mode` (string, optional): "new" | "append" | "overwrite" (default: "new")
 
 **Example:**
 ```json
 {
-  "path": "output.txt",
-  "content": "Hello, World!",
-  "mode": "new"
+  "files": [
+    {
+      "path": "output.txt",
+      "content": "Hello, World!",
+      "mode": "new"
+    },
+    {
+      "path": "log.txt",
+      "content": "Log entry\n",
+      "mode": "append"
+    }
+  ]
 }
 ```
 
@@ -199,11 +220,12 @@ Search for keywords in files or directories.
 ```
 
 #### file_edit
-Multi-mode file editing — string replacement, line-based operations, or unified diff patch.
+Multi-mode file editing — string replacement, line-based operations, or unified diff patch. Supports concurrent batch operations and creating new files.
 
 **Parameters:**
-- `path` (string): File path to edit
-- `mode` (string, optional): `"string_replace"` (default), `"line_replace"`, `"insert"`, `"delete"`, `"patch"`
+- `operations` (array): List of edit operations
+  - `path` (string): File path to edit
+  - `mode` (string, optional): `"string_replace"` (default), `"line_replace"`, `"insert"`, `"delete"`, `"patch"`
 
 **string_replace mode:**
 - `old_string` (string): String to find (exact match, can span multiple lines)
@@ -219,47 +241,58 @@ Multi-mode file editing — string replacement, line-based operations, or unifie
 - `patch` (string): Unified diff patch string
 
 **Features:**
-- `string_replace`: Exact string matching, multi-line support
-- `line_replace`: Replace lines by number — LLM does not need to output old content
-- `insert`: Insert content before a specific line
-- `delete`: Delete a range of lines
-- `patch`: Apply standard unified diff for complex multi-location changes
+- `string_replace`: Exact string matching, multi-line support. Creates new file if not exists when new_string is provided.
+- `line_replace`: Replace lines by number — LLM does not need to output old content. Creates new file if not exists.
+- `insert`: Insert content before a specific line. Creates new file if not exists.
+- `delete`: Delete a range of lines (requires existing file)
+- `patch`: Apply standard unified diff for complex multi-location changes (requires existing file)
 - All modes return replacement summary with preview
+- Multiple operations can be performed concurrently
 
 **Examples:**
 ```json
-// String replacement
+// Single operation
 {
-  "path": "src/main.rs",
-  "mode": "string_replace",
-  "old_string": "fn main() {",
-  "new_string": "fn main() -> Result<(), Box<dyn std::error::Error>> {",
-  "occurrence": 1
+  "operations": [
+    {
+      "path": "src/main.rs",
+      "mode": "string_replace",
+      "old_string": "fn main() {",
+      "new_string": "fn main() -> Result<(), Box<dyn std::error::Error>> {",
+      "occurrence": 1
+    }
+  ]
 }
 
-// Line replacement (no old_string needed!)
+// Concurrent batch operations
 {
-  "path": "src/main.rs",
-  "mode": "line_replace",
-  "start_line": 10,
-  "end_line": 15,
-  "new_string": "    let x = 42;\n    println!(\"{}\", x);"
+  "operations": [
+    {
+      "path": "src/main.rs",
+      "mode": "line_replace",
+      "start_line": 10,
+      "end_line": 15,
+      "new_string": "    let x = 42;\n    println!(\"{}\", x);"
+    },
+    {
+      "path": "src/lib.rs",
+      "mode": "insert",
+      "start_line": 5,
+      "new_string": "use std::collections::HashMap;"
+    }
+  ]
 }
 
-// Insert before line 5
+// Create new file
 {
-  "path": "src/main.rs",
-  "mode": "insert",
-  "start_line": 5,
-  "new_string": "use std::collections::HashMap;"
-}
-
-// Delete lines 20-25
-{
-  "path": "src/main.rs",
-  "mode": "delete",
-  "start_line": 20,
-  "end_line": 25
+  "operations": [
+    {
+      "path": "src/new_module.rs",
+      "mode": "string_replace",
+      "old_string": "",
+      "new_string": "pub fn hello() {\n    println!(\"Hello\");\n}"
+    }
+  ]
 }
 ```
 
@@ -287,6 +320,47 @@ Execute shell commands with security checks (dangerous).
   "cwd": "/home/user",
   "timeout": 30,
   "shell": "bash"
+}
+```
+
+#### execute_python
+Execute Python code in a sandboxed environment (safe by default). Useful for precise calculations, data processing, and logic evaluation.
+
+**Sandbox Mode (Default):**
+- Filesystem access is disabled (`open()`, `os` module blocked)
+- Available stdlib modules: `math`, `random`, `statistics`, `datetime`, `itertools`, `functools`, `collections`, `re`, `string`, `json`, `fractions`, `decimal`, `typing`, `hashlib`, `base64`, `bisect`, `heapq`, `copy`, `pprint`, `enum`, `types`, `dataclasses`, `inspect`, `sys`
+- Assign return value to `__result`; last line auto-evaluates if `__result` is not set
+
+**Filesystem Mode:**
+- Enable via WebUI "Filesystem" toggle on the `execute_python` card
+- When enabled, `__working_dir` is injected into globals
+- All Python file operations are restricted to the configured working directory
+
+**Parameters:**
+- `code` (string): Python code to execute
+- `timeout_ms` (number, optional): Timeout in milliseconds (default: 5000, max: 30000)
+
+**Parameters:**
+- `code` (string): Python code to execute
+- `timeout_ms` (number, optional): Timeout in milliseconds (default: 5000, max: 30000)
+
+**Returns:**
+- `result`: Value of `__result` variable (or auto-evaluated last line expression)
+- `stdout`: Captured standard output
+- `stderr`: Captured standard error / hints
+- `execution_time_ms`: Execution duration in milliseconds
+
+**Notes:**
+- Assign the desired return value to `__result`
+- If `__result` is not set, the last line is automatically evaluated as an expression
+- The global variable `__working_dir` contains the server working directory
+- Python standard library modules (math, random, statistics, datetime, etc.) are available
+
+**Example:**
+```json
+{
+  "code": "import math\n__result = math.pi * 2",
+  "timeout_ms": 5000
 }
 ```
 
@@ -396,16 +470,20 @@ Read image file and return MCP-standard image content or metadata.
 ### Development Tools
 
 #### file_stat
-Get file or directory metadata.
+Get metadata for one or more files or directories concurrently.
 
 **Parameters:**
-- `path` (string): File or directory path
+- `paths` (array): List of file or directory paths
 
 **Returns:**
 - `name`, `path`, `exists`
 - `file_type`: `"file"`, `"directory"`, `"symlink"`, or `"unknown"`
 - `size`: Size in bytes
 - `size_human`: Human-readable size string
+- `is_text`: Whether the file is a valid UTF-8 text file
+- `char_count`: Number of characters (for text files)
+- `line_count`: Number of lines (for text files)
+- `encoding`: Detected encoding (e.g., "utf-8")
 - `readable`, `writable`, `executable`: Permission booleans
 - `modified`, `created`, `accessed`: Timestamp strings
 - `is_symlink`: Whether the path is a symbolic link
@@ -540,13 +618,15 @@ MCP_DISABLE_TOOLS=file_write,execute_command
 
 ### Working Directory Restriction
 
-All file operations are restricted to the configured working directory:
+Read-only file tools (`dir_list`, `file_read`, `file_search`, `file_stat`, `path_exists`, `json_query`, `image_read`, `hash_compute`, `git_ops`) are **not** restricted to the working directory.
+
+Write operations (`file_write`, `file_edit`, `file_ops`) and execution tools (`execute_command`, `execute_python`) are restricted to the configured working directory:
 
 ```bash
 ./rust-mcp-server --working-dir /var/mcp-safe
 ```
 
-Path traversal attempts (`../`) are blocked.
+Path traversal attempts (`../`) are blocked for restricted tools.
 
 ### Dangerous Command Blacklist
 

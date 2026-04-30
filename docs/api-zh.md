@@ -15,7 +15,7 @@
   "tools": [
     {
       "name": "file_read",
-      "description": "Read text file content with line range support",
+      "description": "Read text file content with line range support. Not restricted to working directory.",
       "enabled": true,
       "call_count": 42,
       "is_calling": false,
@@ -24,7 +24,7 @@
     },
     {
       "name": "execute_command",
-      "description": "Execute shell command in specified directory",
+      "description": "Execute shell command in specified directory (restricted to working directory)",
       "enabled": false,
       "call_count": 5,
       "is_calling": false,
@@ -235,6 +235,38 @@
 }
 ```
 
+### Python 文件系统访问切换
+
+#### GET /api/python-fs-access
+获取 `execute_python` 工具的当前文件系统访问状态。
+
+**响应：**
+```json
+{
+  "enabled": false
+}
+```
+
+#### POST /api/python-fs-access
+启用或禁用 `execute_python` 工具的文件系统访问。
+
+**请求：**
+```json
+{
+  "enabled": true
+}
+```
+
+**响应：**
+```json
+{
+  "success": true,
+  "enabled": true
+}
+```
+
+**注意：** 当文件系统访问被禁用（默认）时，`execute_python` 以沙箱模式运行，`builtins.open`、`_io.FileIO` 以及 `os`/`nt`/`posix` 模块被阻止。启用后，Python 代码可以访问配置的工作目录内的文件。
+
 ### 搜索
 
 #### GET /api/search?q={query}
@@ -348,33 +380,55 @@ MCP 服务通过 HTTP 或 SSE 使用 JSON-RPC 2.0。
     "tools": [
       {
         "name": "file_read",
-        "description": "读取文本文件内容，支持行范围",
+        "description": "并发读取一个或多个文本文件，每个文件可独立设置行号和范围",
         "inputSchema": {
           "type": "object",
           "properties": {
-            "path": {"type": "string"},
-            "start_line": {"type": "integer"},
-            "end_line": {"type": "integer"},
-            "highlight_line": {"type": "integer"}
+            "files": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "path": {"type": "string"},
+                  "start_line": {"type": "integer"},
+                  "end_line": {"type": "integer"},
+                  "offset_chars": {"type": "integer"},
+                  "max_chars": {"type": "integer"},
+                  "line_numbers": {"type": "boolean"},
+                  "highlight_line": {"type": "integer"}
+                },
+                "required": ["path"]
+              }
+            }
           },
-          "required": ["path"]
+          "required": ["files"]
         }
       },
       {
         "name": "file_edit",
-        "description": "使用 string_replace、line_replace、insert、delete 或 patch 模式编辑文件",
+        "description": "并发编辑一个或多个文件，支持 string_replace、line_replace、insert、delete、patch 模式，可创建新文件",
         "inputSchema": {
           "type": "object",
           "properties": {
-            "path": {"type": "string"},
-            "mode": {"type": "string"},
-            "old_string": {"type": "string"},
-            "new_string": {"type": "string"},
-            "start_line": {"type": "integer"},
-            "end_line": {"type": "integer"},
-            "patch": {"type": "string"}
+            "operations": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "path": {"type": "string"},
+                  "mode": {"type": "string"},
+                  "old_string": {"type": "string"},
+                  "new_string": {"type": "string"},
+                  "occurrence": {"type": "integer"},
+                  "start_line": {"type": "integer"},
+                  "end_line": {"type": "integer"},
+                  "patch": {"type": "string"}
+                },
+                "required": ["path"]
+              }
+            }
           },
-          "required": ["path"]
+          "required": ["operations"]
         }
       },
       {
@@ -391,13 +445,16 @@ MCP 服务通过 HTTP 或 SSE 使用 JSON-RPC 2.0。
       },
       {
         "name": "file_stat",
-        "description": "获取文件或目录的元数据",
+        "description": "并发获取一个或多个文件或目录的元数据，对文本文件返回字符数和行数",
         "inputSchema": {
           "type": "object",
           "properties": {
-            "path": {"type": "string"}
+            "paths": {
+              "type": "array",
+              "items": {"type": "string"}
+            }
           },
-          "required": ["path"]
+          "required": ["paths"]
         }
       },
       {
@@ -434,6 +491,18 @@ MCP 服务通过 HTTP 或 SSE 使用 JSON-RPC 2.0。
           },
           "required": ["name"]
         }
+      },
+      {
+        "name": "execute_python",
+        "description": "在沙箱环境中执行 Python 代码（默认安全）。将返回值赋给 __result。可用模块：math, random, statistics, datetime, itertools, functools, collections, re, string, json, fractions, decimal, typing, hashlib, base64, bisect, heapq, copy, pprint, enum, types, dataclasses, inspect, sys。文件系统访问可通过 WebUI 切换。"}}
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "code": {"type": "string", "description": "要执行的 Python 代码"},
+            "timeout_ms": {"type": "integer", "minimum": 1000, "maximum": 30000, "default": 5000}
+          },
+          "required": ["code"]
+        }
       }
     ]
   }
@@ -451,9 +520,9 @@ MCP 服务通过 HTTP 或 SSE 使用 JSON-RPC 2.0。
   "params": {
     "name": "file_read",
     "arguments": {
-      "path": "/path/to/file.txt",
-      "start_line": 0,
-      "end_line": 100
+      "files": [
+        {"path": "/path/to/file.txt", "start_line": 0, "end_line": 100}
+      ]
     }
   }
 }
@@ -506,7 +575,7 @@ MCP 服务通过 HTTP 或 SSE 使用 JSON-RPC 2.0。
   "error": {
     "code": -32602,
     "message": "Invalid params",
-    "data": "Path is outside working directory"
+    "data": "Path is outside working directory (write operation)"
   }
 }
 ```

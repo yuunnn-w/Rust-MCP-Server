@@ -115,7 +115,14 @@ fn default_disable_tools() -> Vec<String> {
 impl AppConfig {
     /// Parse command line arguments
     pub fn parse_args() -> Self {
-        Self::parse()
+        let mut config = Self::parse();
+        // If working_dir is the default ".", resolve it to the actual current working directory
+        if config.working_dir.as_os_str() == "." {
+            if let Ok(cwd) = std::env::current_dir() {
+                config.working_dir = cwd;
+            }
+        }
+        config
     }
 
     /// Get WebUI bind address

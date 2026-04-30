@@ -272,6 +272,34 @@ html[data-theme="light"] .header {
     box-shadow: 0 0 8px var(--neon-green);
 }
 
+/* Neon Switch Small (for tool cards) */
+.neon-switch.small { width: 32px; height: 18px; }
+.neon-switch.small .slider { border-radius: 18px; }
+.neon-switch.small .slider:before {
+    height: 12px; width: 12px; left: 2px; bottom: 2px;
+}
+.neon-switch.small input:checked + .slider:before {
+    transform: translateX(14px);
+}
+
+/* Tool Filesystem Toggle */
+.tool-fs-toggle {
+    display: flex;
+    align-items: center;
+    gap: 0.35rem;
+    margin-left: auto;
+}
+.fs-toggle-label {
+    font-size: 0.65rem;
+    color: var(--text-muted);
+    font-family: var(--font-mono);
+    letter-spacing: 0.5px;
+}
+.tool-card.dangerous .tool-fs-toggle {
+    border-color: rgba(251, 113, 133, 0.3);
+    background: rgba(251, 113, 133, 0.05);
+}
+
 /* Menu Button */
 .about-btn {
     width: 32px; height: 32px;
@@ -349,6 +377,7 @@ html[data-theme="light"] .header {
 .btn-info:hover { background: rgba(129, 140, 248, 0.1); box-shadow: 0 0 10px rgba(129, 140, 248, 0.2); }
 
 /* Modal */
+body.modal-open { overflow: hidden; }
 .modal {
     display: none; position: fixed; top: 0; left: 0;
     width: 100%; height: 100%;
@@ -390,6 +419,9 @@ html[data-theme="light"] .form-group select {
     background: rgba(255, 255, 255, 0.6);
 }
 .form-group input:focus, .form-group select:focus { outline: none; border-color: var(--neon-cyan); box-shadow: 0 0 10px rgba(45, 212, 191, 0.15); }
+.input-with-btn { display: flex; gap: 0.5rem; }
+.input-with-btn input { flex: 1; }
+.input-with-btn .btn { padding: 0.5rem 0.75rem; font-size: 0.8rem; white-space: nowrap; }
 .form-note {
     padding: 0.75rem; background: rgba(251, 191, 36, 0.05);
     border: 1px solid rgba(251, 191, 36, 0.2); border-radius: var(--radius);

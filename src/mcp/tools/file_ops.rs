@@ -1,12 +1,12 @@
-use crate::utils::file_utils::ensure_path_within_working_dir;
+use crate::utils::file_utils::{ensure_path_within_working_dir, strip_unc_prefix};
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::model::CallToolResult;
 use rmcp::schemars::JsonSchema;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::path::Path;
 
 #[derive(Debug, Deserialize, JsonSchema)]
-pub struct FileOpsParams {
+pub struct FileOpsOperation {
     /// Operation to perform: copy, move, delete, rename
     #[schemars(description = "Operation: copy, move, delete, or rename")]
     pub action: String,
@@ -21,155 +21,380 @@ pub struct FileOpsParams {
     pub overwrite: Option<bool>,
 }
 
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct FileOpsParams {
+    /// List of file operations to perform concurrently
+    #[schemars(description = "List of file operations to perform concurrently")]
+    pub operations: Vec<FileOpsOperation>,
+}
+
+#[derive(Debug, Serialize)]
+struct FileOpsResult {
+    action: String,
+    source: String,
+    success: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    error: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    message: Option<String>,
+}
+
 pub async fn file_ops(
     params: Parameters<FileOpsParams>,
     working_dir: &Path,
 ) -> Result<CallToolResult, String> {
     let params = params.0;
-    let action = params.action.to_lowercase();
-    let source = Path::new(&params.source);
-    let overwrite = params.overwrite.unwrap_or(false);
+
+    let mut futures = Vec::new();
+    for op in params.operations {
+        futures.push(process_single_op(op, working_dir));
+    }
+
+    let results = futures::future::join_all(futures).await;
+
+    let json = serde_json::to_string_pretty(&results).map_err(|e| e.to_string())?;
+    Ok(CallToolResult::success(vec![rmcp::model::Content::text(json)]))
+}
+
+async fn process_single_op(op: FileOpsOperation, working_dir: &Path) -> FileOpsResult {
+    let FileOpsOperation { action, source, target, overwrite } = op;
+    let action_str = action.to_lowercase();
+    let source_path_raw = Path::new(&source);
+    let overwrite = overwrite.unwrap_or(false);
 
     // Security check for source
-    let source_path = ensure_path_within_working_dir(source, working_dir)?;
+    let source_path = match ensure_path_within_working_dir(source_path_raw, working_dir) {
+        Ok(p) => p,
+        Err(e) => {
+            return FileOpsResult {
+                action,
+                source,
+                success: false,
+                error: Some(e),
+                message: None,
+            }
+        }
+    };
 
-    match action.as_str() {
+    let result = match action_str.as_str() {
         "copy" => {
-            let target = params
-                .target
-                .as_deref()
-                .ok_or("'target' is required for copy operation")?;
-            let target_path = ensure_path_within_working_dir(Path::new(target), working_dir)?;
+            let target = match target.as_deref() {
+                Some(t) => t,
+                None => {
+                    return FileOpsResult {
+                        action: action,
+                        source: strip_unc_prefix(&source_path.to_string_lossy()),
+                        success: false,
+                        error: Some("'target' is required for copy operation".to_string()),
+                        message: None,
+                    }
+                }
+            };
+            let target_path = match ensure_path_within_working_dir(Path::new(target), working_dir) {
+                Ok(p) => p,
+                Err(e) => {
+                    return FileOpsResult {
+                        action: action,
+                        source: strip_unc_prefix(&source_path.to_string_lossy()),
+                        success: false,
+                        error: Some(e),
+                        message: None,
+                    }
+                }
+            };
 
             if !source_path.exists() {
-                return Err(format!("Source file '{}' does not exist", params.source));
+                return FileOpsResult {
+                    action: action,
+                    source: strip_unc_prefix(&source_path.to_string_lossy()),
+                    success: false,
+                    error: Some(format!("Source file '{}' does not exist", source)),
+                    message: None,
+                };
             }
             if !source_path.is_file() {
-                return Err(format!("Source path '{}' is not a file", params.source));
+                return FileOpsResult {
+                    action: action,
+                    source: strip_unc_prefix(&source_path.to_string_lossy()),
+                    success: false,
+                    error: Some(format!("Source path '{}' is not a file", source)),
+                    message: None,
+                };
             }
             if target_path.exists() && !overwrite {
-                return Err(format!(
-                    "Destination file '{}' already exists. Set overwrite=true to replace.",
-                    target
-                ));
+                return FileOpsResult {
+                    action: action,
+                    source: strip_unc_prefix(&source_path.to_string_lossy()),
+                    success: false,
+                    error: Some(format!(
+                        "Destination file '{}' already exists. Set overwrite=true to replace.",
+                        target
+                    )),
+                    message: None,
+                };
             }
             if let Some(parent) = target_path.parent() {
-                tokio::fs::create_dir_all(parent)
-                    .await
-                    .map_err(|e| format!("Failed to create parent directories: {}", e))?;
+                if let Err(e) = tokio::fs::create_dir_all(parent).await {
+                    return FileOpsResult {
+                        action: action,
+                        source: strip_unc_prefix(&source_path.to_string_lossy()),
+                        success: false,
+                        error: Some(format!("Failed to create parent directories: {}", e)),
+                        message: None,
+                    };
+                }
             }
-            tokio::fs::copy(&source_path, &target_path)
-                .await
-                .map_err(|e| format!("Failed to copy file: {}", e))?;
-
-            Ok(CallToolResult::success(vec![rmcp::model::Content::text(
-                format!(
-                    "File '{}' copied to '{}' successfully.",
-                    source_path.display(),
-                    target_path.display()
-                ),
-            )]))
+            match tokio::fs::copy(&source_path, &target_path).await {
+                Ok(_) => FileOpsResult {
+                    action: action,
+                    source: strip_unc_prefix(&source_path.to_string_lossy()),
+                    success: true,
+                    error: None,
+                    message: Some(format!(
+                        "File '{}' copied to '{}' successfully.",
+                        strip_unc_prefix(&source_path.to_string_lossy()),
+                        strip_unc_prefix(&target_path.to_string_lossy())
+                    )),
+                },
+                Err(e) => FileOpsResult {
+                    action: action,
+                    source: strip_unc_prefix(&source_path.to_string_lossy()),
+                    success: false,
+                    error: Some(format!("Failed to copy file: {}", e)),
+                    message: None,
+                },
+            }
         }
         "move" => {
-            let target = params
-                .target
-                .as_deref()
-                .ok_or("'target' is required for move operation")?;
-            let target_path = ensure_path_within_working_dir(Path::new(target), working_dir)?;
+            let target = match target.as_deref() {
+                Some(t) => t,
+                None => {
+                    return FileOpsResult {
+                        action: action,
+                        source: strip_unc_prefix(&source_path.to_string_lossy()),
+                        success: false,
+                        error: Some("'target' is required for move operation".to_string()),
+                        message: None,
+                    }
+                }
+            };
+            let target_path = match ensure_path_within_working_dir(Path::new(target), working_dir) {
+                Ok(p) => p,
+                Err(e) => {
+                    return FileOpsResult {
+                        action: action,
+                        source: strip_unc_prefix(&source_path.to_string_lossy()),
+                        success: false,
+                        error: Some(e),
+                        message: None,
+                    }
+                }
+            };
 
             if !source_path.exists() {
-                return Err(format!("Source file '{}' does not exist", params.source));
+                return FileOpsResult {
+                    action: action,
+                    source: strip_unc_prefix(&source_path.to_string_lossy()),
+                    success: false,
+                    error: Some(format!("Source file '{}' does not exist", source)),
+                    message: None,
+                };
             }
             if !source_path.is_file() {
-                return Err(format!("Source path '{}' is not a file", params.source));
+                return FileOpsResult {
+                    action: action,
+                    source: strip_unc_prefix(&source_path.to_string_lossy()),
+                    success: false,
+                    error: Some(format!("Source path '{}' is not a file", source)),
+                    message: None,
+                };
             }
             if target_path.exists() && !overwrite {
-                return Err(format!(
-                    "Destination file '{}' already exists. Set overwrite=true to replace.",
-                    target
-                ));
+                return FileOpsResult {
+                    action: action,
+                    source: strip_unc_prefix(&source_path.to_string_lossy()),
+                    success: false,
+                    error: Some(format!(
+                        "Destination file '{}' already exists. Set overwrite=true to replace.",
+                        target
+                    )),
+                    message: None,
+                };
             }
             if let Some(parent) = target_path.parent() {
-                tokio::fs::create_dir_all(parent)
-                    .await
-                    .map_err(|e| format!("Failed to create parent directories: {}", e))?;
+                if let Err(e) = tokio::fs::create_dir_all(parent).await {
+                    return FileOpsResult {
+                        action: action,
+                        source: strip_unc_prefix(&source_path.to_string_lossy()),
+                        success: false,
+                        error: Some(format!("Failed to create parent directories: {}", e)),
+                        message: None,
+                    };
+                }
             }
-            tokio::fs::rename(&source_path, &target_path)
-                .await
-                .map_err(|e| format!("Failed to move file: {}", e))?;
-
-            Ok(CallToolResult::success(vec![rmcp::model::Content::text(
-                format!(
-                    "File '{}' moved to '{}' successfully.",
-                    source_path.display(),
-                    target_path.display()
-                ),
-            )]))
+            match tokio::fs::rename(&source_path, &target_path).await {
+                Ok(_) => FileOpsResult {
+                    action: action,
+                    source: strip_unc_prefix(&source_path.to_string_lossy()),
+                    success: true,
+                    error: None,
+                    message: Some(format!(
+                        "File '{}' moved to '{}' successfully.",
+                        strip_unc_prefix(&source_path.to_string_lossy()),
+                        strip_unc_prefix(&target_path.to_string_lossy())
+                    )),
+                },
+                Err(e) => FileOpsResult {
+                    action: action,
+                    source: strip_unc_prefix(&source_path.to_string_lossy()),
+                    success: false,
+                    error: Some(format!("Failed to move file: {}", e)),
+                    message: None,
+                },
+            }
         }
         "delete" => {
             if !source_path.exists() {
-                return Err(format!("File '{}' does not exist", params.source));
+                return FileOpsResult {
+                    action: action,
+                    source: strip_unc_prefix(&source_path.to_string_lossy()),
+                    success: false,
+                    error: Some(format!("File '{}' does not exist", source)),
+                    message: None,
+                };
             }
             if !source_path.is_file() {
-                return Err(format!("Path '{}' is not a file", params.source));
+                return FileOpsResult {
+                    action: action,
+                    source: strip_unc_prefix(&source_path.to_string_lossy()),
+                    success: false,
+                    error: Some(format!("Path '{}' is not a file", source)),
+                    message: None,
+                };
             }
-            tokio::fs::remove_file(&source_path)
-                .await
-                .map_err(|e| format!("Failed to delete file: {}", e))?;
-
-            let parent = source_path.parent();
-            let parent_info = if let Some(parent) = parent {
-                format!(" Parent directory: {}", parent.display())
-            } else {
-                String::new()
-            };
-
-            Ok(CallToolResult::success(vec![rmcp::model::Content::text(
-                format!("File '{}' deleted successfully.{}", source_path.display(), parent_info),
-            )]))
+            match tokio::fs::remove_file(&source_path).await {
+                Ok(_) => {
+                    let parent = source_path.parent();
+                    let parent_info = if let Some(parent) = parent {
+                        format!(" Parent directory: {}", strip_unc_prefix(&parent.to_string_lossy()))
+                    } else {
+                        String::new()
+                    };
+                    FileOpsResult {
+                        action: action,
+                        source: strip_unc_prefix(&source_path.to_string_lossy()),
+                        success: true,
+                        error: None,
+                        message: Some(format!(
+                            "File '{}' deleted successfully.{}",
+                            strip_unc_prefix(&source_path.to_string_lossy()),
+                            parent_info
+                        )),
+                    }
+                }
+                Err(e) => FileOpsResult {
+                    action: action,
+                    source: strip_unc_prefix(&source_path.to_string_lossy()),
+                    success: false,
+                    error: Some(format!("Failed to delete file: {}", e)),
+                    message: None,
+                },
+            }
         }
         "rename" => {
-            let new_name = params
-                .target
-                .as_deref()
-                .ok_or("'target' (new name) is required for rename operation")?;
+            let new_name = match target.as_deref() {
+                Some(t) => t,
+                None => {
+                    return FileOpsResult {
+                        action: action,
+                        source: strip_unc_prefix(&source_path.to_string_lossy()),
+                        success: false,
+                        error: Some("'target' (new name) is required for rename operation".to_string()),
+                        message: None,
+                    }
+                }
+            };
 
             if !source_path.exists() {
-                return Err(format!("File '{}' does not exist", params.source));
+                return FileOpsResult {
+                    action: action,
+                    source: strip_unc_prefix(&source_path.to_string_lossy()),
+                    success: false,
+                    error: Some(format!("File '{}' does not exist", source)),
+                    message: None,
+                };
             }
             if !source_path.is_file() {
-                return Err(format!("Path '{}' is not a file", params.source));
+                return FileOpsResult {
+                    action: action,
+                    source: strip_unc_prefix(&source_path.to_string_lossy()),
+                    success: false,
+                    error: Some(format!("Path '{}' is not a file", source)),
+                    message: None,
+                };
             }
 
-            let parent = source_path
-                .parent()
-                .ok_or_else(|| "Cannot rename root file".to_string())?;
+            let parent = match source_path.parent() {
+                Some(p) => p,
+                None => {
+                    return FileOpsResult {
+                        action: action,
+                        source: strip_unc_prefix(&source_path.to_string_lossy()),
+                        success: false,
+                        error: Some("Cannot rename root file".to_string()),
+                        message: None,
+                    }
+                }
+            };
             let new_path = parent.join(new_name);
 
             if new_path.exists() {
-                return Err(format!(
-                    "A file with name '{}' already exists in the same directory",
-                    new_name
-                ));
+                return FileOpsResult {
+                    action: action,
+                    source: strip_unc_prefix(&source_path.to_string_lossy()),
+                    success: false,
+                    error: Some(format!(
+                        "A file with name '{}' already exists in the same directory",
+                        new_name
+                    )),
+                    message: None,
+                };
             }
 
-            tokio::fs::rename(&source_path, &new_path)
-                .await
-                .map_err(|e| format!("Failed to rename file: {}", e))?;
-
-            Ok(CallToolResult::success(vec![rmcp::model::Content::text(
-                format!(
-                    "File '{}' renamed to '{}' successfully.",
-                    source_path.display(),
-                    new_path.display()
-                ),
-            )]))
+            match tokio::fs::rename(&source_path, &new_path).await {
+                Ok(_) => FileOpsResult {
+                    action: action,
+                    source: strip_unc_prefix(&source_path.to_string_lossy()),
+                    success: true,
+                    error: None,
+                    message: Some(format!(
+                        "File '{}' renamed to '{}' successfully.",
+                        strip_unc_prefix(&source_path.to_string_lossy()),
+                        strip_unc_prefix(&new_path.to_string_lossy())
+                    )),
+                },
+                Err(e) => FileOpsResult {
+                    action: action,
+                    source: strip_unc_prefix(&source_path.to_string_lossy()),
+                    success: false,
+                    error: Some(format!("Failed to rename file: {}", e)),
+                    message: None,
+                },
+            }
         }
-        _ => Err(format!(
-            "Invalid action '{}'. Use 'copy', 'move', 'delete', or 'rename'.",
-            params.action
-        )),
-    }
+        _ => FileOpsResult {
+            action: action,
+            source: strip_unc_prefix(&source_path.to_string_lossy()),
+            success: false,
+            error: Some(format!(
+                "Invalid action '{}'. Use 'copy', 'move', 'delete', or 'rename'.",
+                action_str
+            )),
+            message: None,
+        },
+    };
+
+    result
 }
 
 #[cfg(test)]
@@ -186,10 +411,12 @@ mod tests {
         fs::write(&source, "test content").unwrap();
 
         let params = FileOpsParams {
-            action: "copy".to_string(),
-            source: source.to_string_lossy().to_string(),
-            target: Some(dest.to_string_lossy().to_string()),
-            overwrite: Some(false),
+            operations: vec![FileOpsOperation {
+                action: "copy".to_string(),
+                source: source.to_string_lossy().to_string(),
+                target: Some(dest.to_string_lossy().to_string()),
+                overwrite: Some(false),
+            }],
         };
 
         let result = file_ops(Parameters(params), temp_dir.path()).await;
@@ -206,10 +433,12 @@ mod tests {
         fs::write(&source, "test content").unwrap();
 
         let params = FileOpsParams {
-            action: "move".to_string(),
-            source: source.to_string_lossy().to_string(),
-            target: Some(dest.to_string_lossy().to_string()),
-            overwrite: Some(false),
+            operations: vec![FileOpsOperation {
+                action: "move".to_string(),
+                source: source.to_string_lossy().to_string(),
+                target: Some(dest.to_string_lossy().to_string()),
+                overwrite: Some(false),
+            }],
         };
 
         let result = file_ops(Parameters(params), temp_dir.path()).await;
@@ -225,10 +454,12 @@ mod tests {
         fs::write(&file, "test content").unwrap();
 
         let params = FileOpsParams {
-            action: "delete".to_string(),
-            source: file.to_string_lossy().to_string(),
-            target: None,
-            overwrite: None,
+            operations: vec![FileOpsOperation {
+                action: "delete".to_string(),
+                source: file.to_string_lossy().to_string(),
+                target: None,
+                overwrite: None,
+            }],
         };
 
         let result = file_ops(Parameters(params), temp_dir.path()).await;
@@ -243,10 +474,12 @@ mod tests {
         fs::write(&file, "test content").unwrap();
 
         let params = FileOpsParams {
-            action: "rename".to_string(),
-            source: file.to_string_lossy().to_string(),
-            target: Some("new.txt".to_string()),
-            overwrite: None,
+            operations: vec![FileOpsOperation {
+                action: "rename".to_string(),
+                source: file.to_string_lossy().to_string(),
+                target: Some("new.txt".to_string()),
+                overwrite: None,
+            }],
         };
 
         let result = file_ops(Parameters(params), temp_dir.path()).await;
@@ -259,13 +492,52 @@ mod tests {
     async fn test_file_ops_invalid_action() {
         let temp_dir = TempDir::new().unwrap();
         let params = FileOpsParams {
-            action: "invalid".to_string(),
-            source: "/tmp/test.txt".to_string(),
-            target: None,
-            overwrite: None,
+            operations: vec![FileOpsOperation {
+                action: "invalid".to_string(),
+                source: "/tmp/test.txt".to_string(),
+                target: None,
+                overwrite: None,
+            }],
         };
 
         let result = file_ops(Parameters(params), temp_dir.path()).await;
-        assert!(result.is_err());
+        assert!(result.is_ok());
+
+        if let Ok(ref call_result) = result {
+            if let Some(text) = call_result.content.first().and_then(|c| c.as_text()) {
+                assert!(text.text.contains("\"success\": false"));
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn test_file_ops_concurrent() {
+        let temp_dir = TempDir::new().unwrap();
+        let file1 = temp_dir.path().join("a.txt");
+        let file2 = temp_dir.path().join("b.txt");
+        fs::write(&file1, "A").unwrap();
+        fs::write(&file2, "B").unwrap();
+
+        let params = FileOpsParams {
+            operations: vec![
+                FileOpsOperation {
+                    action: "delete".to_string(),
+                    source: file1.to_string_lossy().to_string(),
+                    target: None,
+                    overwrite: None,
+                },
+                FileOpsOperation {
+                    action: "delete".to_string(),
+                    source: file2.to_string_lossy().to_string(),
+                    target: None,
+                    overwrite: None,
+                },
+            ],
+        };
+
+        let result = file_ops(Parameters(params), temp_dir.path()).await;
+        assert!(result.is_ok());
+        assert!(!file1.exists());
+        assert!(!file2.exists());
     }
 }

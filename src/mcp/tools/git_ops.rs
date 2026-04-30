@@ -1,4 +1,4 @@
-use crate::utils::file_utils::{ensure_path_within_working_dir, is_path_within_working_dir};
+use crate::utils::file_utils::resolve_path;
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::model::CallToolResult;
 use rmcp::schemars::JsonSchema;
@@ -29,15 +29,8 @@ pub async fn git_ops(
     let repo_path_buf = Path::new(repo_path);
     let action = params.action.to_lowercase();
 
-    // Security: ensure repo path is within working directory
-    if !is_path_within_working_dir(repo_path_buf, working_dir) {
-        return Err(format!(
-            "Repository path '{}' is outside the allowed working directory",
-            repo_path
-        ));
-    }
-
-    let canonical_repo = ensure_path_within_working_dir(repo_path_buf, working_dir)?;
+    // Resolve repo path without working directory restriction (read-only git operations)
+    let canonical_repo = resolve_path(repo_path_buf, working_dir)?;
 
     if !canonical_repo.exists() {
         return Err(format!("Repository path '{}' does not exist", repo_path));

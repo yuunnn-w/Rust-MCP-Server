@@ -34,13 +34,13 @@ Rust MCP Server 实现了多层安全机制，在为 AI 助手提供强大功能
 
 ### 1. 工作目录限制
 
-所有文件操作都被限制在可配置的工作目录内，防止未授权访问敏感系统文件。
+写操作工具（file_write、file_ops、file_edit、execute_command、execute_python）被限制在可配置的工作目录内，防止未授权修改敏感系统文件。只读工具（dir_list、file_read、file_search、file_stat、path_exists、json_query、git_ops、image_read、hash_compute）可以访问文件系统中的任意路径。
 
 **工作原理：**
-1. 所有路径被规范化为绝对路径
+1. 写操作的所有路径被规范化为绝对路径
 2. 解析符号链接
 3. 检测并阻止路径穿越模式（`../`）
-4. 工作目录外的路径被拒绝
+4. 工作目录外的路径对写操作被拒绝
 
 **配置：**
 ```bash
@@ -52,7 +52,7 @@ export MCP_WORKING_DIR=/var/mcp-safe
 ./rust-mcp-server
 ```
 
-**安全检查：**
+**安全检查（仅写操作）：**
 ```rust
 // 伪代码
 fn validate_path(path: &Path, working_dir: &Path) -> bool {
@@ -199,30 +199,31 @@ RUST_LOG=debug ./rust-mcp-server
 
 ## 工具分类
 
-### 安全工具（16个）
-这些工具默认启用是安全的：
+### 安全工具（17个）
+这些工具默认启用是安全的。只读文件工具不受工作目录限制：
 - `calculator` - 数学计算
-- `dir_list` - 目录列表
-- `file_read` - 文件读取
-- `file_search` - 文件内容搜索
+- `dir_list` - 目录列表（不受工作目录限制）
+- `file_read` - 文件读取（不受工作目录限制）
+- `file_search` - 文件内容搜索（不受工作目录限制）
 - `datetime` - 日期/时间
 - `base64_codec` - Base64 编码/解码
-- `hash_compute` - 哈希计算
+- `hash_compute` - 哈希计算（不受工作目录限制）
 - `http_request` - HTTP 请求
-- `image_read` - 图像读取
+- `image_read` - 图像读取（不受工作目录限制）
 - `system_info` - 系统信息
-- `file_stat` - 文件/目录元数据
-- `path_exists` - 路径存在性检查
-- `json_query` - JSON 文件查询
+- `file_stat` - 文件/目录元数据（不受工作目录限制）
+- `path_exists` - 路径存在性检查（不受工作目录限制）
+- `json_query` - JSON 文件查询（不受工作目录限制）
 - `env_get` - 环境变量读取
-- `git_ops` - Git 仓库只读操作
+- `git_ops` - Git 仓库只读操作（不受工作目录限制）
 - `process_list` - 系统进程列表
+- `execute_python` - Python 代码执行（默认沙箱模式，文件系统访问可通过 WebUI 切换）
 
 ### 危险工具（4个）
-这些工具需要谨慎使用：
-- `file_write` - 文件写入（可能覆盖数据）
-- `file_ops` - 复制、移动、删除或重命名文件
-- `file_edit` - 多模式文件编辑（可能修改文件）
+这些工具需要谨慎使用，且被限制在工作目录内：
+- `file_write` - 文件写入（可能覆盖数据，限制在工作目录内）
+- `file_ops` - 复制、移动、删除或重命名文件（限制在工作目录内）
+- `file_edit` - 多模式文件编辑（可能修改文件，限制在工作目录内）
 - `execute_command` - Shell 命令执行
 
 ## 最佳实践

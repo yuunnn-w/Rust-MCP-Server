@@ -34,7 +34,7 @@ Rust MCP Server 是一个使用 Rust 构建的高性能 [模型上下文协议 (
 ## 功能特性
 
 ### 核心功能
-- **20 个内置工具**: 文件操作、HTTP 请求、计算、系统信息、Base64 编解码、Git 操作、JSON 查询等
+- **21 个内置工具**: 文件操作、HTTP 请求、计算、系统信息、Base64 编解码、Git 操作、JSON 查询、Python 代码执行等
 - **WebUI 控制面板**: Cyberpunk AI Command Center 主题，玻璃态 HUD、动态背景、终端日志流、3D 卡片悬浮效果
 - **实时更新**: 基于 SSE 的实时状态更新
 - **系统指标监控**: 实时 CPU、内存、负载监控（HUD + `/api/system-metrics` 端点）
@@ -51,23 +51,27 @@ Rust MCP Server 是一个使用 Rust 构建的高性能 [模型上下文协议 (
 
 ### 可用工具
 
-#### 文件操作（安全）
+#### 文件操作（安全 / 默认启用）
+以下读操作工具**不受工作目录限制**，可访问任意路径：
+
 | 工具 | 描述 | 危险 |
 |------|-------------|------|
-| `dir_list` | 树形或扁平结构列出目录内容 | 否 |
-| `file_read` | 读取文本文件内容，支持行范围和行高亮 | 否 |
+| `dir_list` | 树形或扁平结构列出目录内容，包含文本文件元数据（字符数、行数） | 否 |
+| `file_read` | 并发读取一个或多个文本文件，支持行范围和行高亮 | 否 |
 | `file_search` | 搜索关键词，支持详细/紧凑/位置三种输出模式 | 否 |
-| `file_edit` | 多模式编辑：string_replace、line_replace、insert、delete、patch | 是 |
-| `file_stat` | 获取文件/目录元数据（大小、权限、时间戳） | 否 |
+| `file_stat` | 并发获取一个或多个文件或目录的元数据，包含文本检测（is_text、字符数、行数） | 否 |
 | `path_exists` | 轻量级路径存在性检查 | 否 |
 | `json_query` | 使用 JSON Pointer 语法查询 JSON 文件 | 否 |
 | `image_read` | 读取图像文件，返回标准 MCP ImageContent（供视觉编码器使用）及元数据 | 否 |
 
-#### 文件操作（危险 - 默认禁用）
+#### 文件操作（危险 / 默认禁用）
+以下写操作工具**受工作目录限制**：
+
 | 工具 | 描述 | 安全检查 |
 |------|-------------|----------|
-| `file_write` | 写入文件内容 | 工作目录检查 |
-| `file_ops` | 复制、移动、删除或重命名文件 | 工作目录检查 |
+| `file_edit` | 多模式编辑：string_replace、line_replace、insert、delete、patch。可创建新文件。支持并发批量操作。 | 工作目录检查 |
+| `file_write` | 并发写入一个或多个文件 | 工作目录检查 |
+| `file_ops` | 并发复制、移动、删除或重命名一个或多个文件 | 工作目录检查 |
 
 #### 系统与网络工具
 | 工具 | 描述 | 默认状态 |
@@ -78,6 +82,7 @@ Rust MCP Server 是一个使用 Rust 构建的高性能 [模型上下文协议 (
 | `http_request` | 发起 HTTP GET/POST/PUT/DELETE/PATCH/HEAD 请求 | 禁用 |
 | `git_ops` | 运行 git 命令（status、diff、log、branch、show） | 启用 |
 | `env_get` | 获取环境变量值 | 启用 |
+| `execute_python` | 在沙箱环境中执行 Python 代码（默认安全，文件系统访问可切换） | 启用 |
 
 #### 实用工具
 | 工具 | 描述 |
@@ -160,7 +165,7 @@ http://127.0.0.1:2233
 | `--mcp-port` | `MCP_PORT` | `3344` | MCP 服务端口 |
 | `--max-concurrency` | `MCP_MAX_CONCURRENCY` | `10` | 最大并发调用数 |
 | `--working-dir` | `MCP_WORKING_DIR` | `.` | 文件操作工作目录 |
-| `--disable-tools` | `MCP_DISABLE_TOOLS` | 见下文 | 禁用的工具列表（默认禁用10个，启用10个） |
+| `--disable-tools` | `MCP_DISABLE_TOOLS` | 见下文 | 禁用的工具列表（默认禁用10个，启用11个） |
 | `--allow-dangerous-commands` | `MCP_ALLOW_DANGEROUS_COMMANDS` | - | 允许的危险命令 ID |
 | `--log-level` | `MCP_LOG_LEVEL` | `info` | 日志级别 |
 | `--disable-webui` | - | - | 禁用 WebUI 面板 |
@@ -168,7 +173,7 @@ http://127.0.0.1:2233
 | `--disable-allowed-hosts` | `MCP_DISABLE_ALLOWED_HOSTS` | - | 禁用 DNS 重绑定保护（不推荐公网使用） |
 
 **默认工具状态：**
-- **默认启用（10个）：** `calculator`、`dir_list`、`file_read`、`file_search`、`image_read`、`file_stat`、`path_exists`、`json_query`、`git_ops`、`env_get`
+- **默认启用（11个）：** `calculator`、`dir_list`、`file_read`、`file_search`、`image_read`、`file_stat`、`path_exists`、`json_query`、`git_ops`、`env_get`、`execute_python`
 - **默认禁用（10个）：** `file_write`、`file_ops`、`file_edit`、`http_request`、`datetime`、`execute_command`、`process_list`、`base64_codec`、`hash_compute`、`system_info`
 
 ### 危险命令 ID
@@ -214,7 +219,9 @@ http://127.0.0.1:2233
 
 ### 文件操作安全
 
-所有文件操作都被限制在配置的工作目录内：
+读操作类工具（`dir_list`、`file_read`、`file_search`、`file_stat`、`path_exists`、`json_query`、`image_read`、`hash_compute`、`git_ops`）不受工作目录限制，可访问任意路径。
+
+写操作类工具（`file_write`、`file_edit`、`file_ops`）以及 `execute_command`、`execute_python` 被限制在配置的工作目录内：
 - 路径遍历攻击（`../etc/passwd`）被阻止
 - 符号链接逃逸被阻止
 - 工作目录外的绝对路径被拒绝

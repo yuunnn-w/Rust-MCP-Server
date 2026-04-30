@@ -68,6 +68,12 @@ pub struct EnableToolRequest {
     pub enabled: bool,
 }
 
+/// Python filesystem access toggle request
+#[derive(Debug, Deserialize)]
+pub struct PythonFsAccessRequest {
+    pub enabled: bool,
+}
+
 /// Update config request
 #[derive(Debug, Deserialize)]
 pub struct UpdateConfigRequest {
@@ -186,6 +192,27 @@ pub async fn enable_tool(
         "tool": name,
         "enabled": request.enabled
     })))
+}
+
+/// Get python filesystem access status
+pub async fn get_python_fs_access(State(state): State<Arc<ServerState>>) -> Json<serde_json::Value> {
+    let enabled = state.is_python_fs_access_enabled().await;
+    Json(serde_json::json!({
+        "success": true,
+        "enabled": enabled
+    }))
+}
+
+/// Enable or disable python filesystem access
+pub async fn set_python_fs_access(
+    State(state): State<Arc<ServerState>>,
+    Json(request): Json<PythonFsAccessRequest>,
+) -> Json<serde_json::Value> {
+    state.set_python_fs_access_enabled(request.enabled).await;
+    Json(serde_json::json!({
+        "success": true,
+        "enabled": request.enabled
+    }))
 }
 
 /// Get current configuration
@@ -422,26 +449,80 @@ pub async fn get_tool_detail(
 /// Generate usage information for a tool
 fn generate_tool_usage(tool_name: &str) -> String {
     match tool_name {
-        "dir_list" => "Usage: List directory contents with filtering and brief mode (max depth 5).\nParameters: 'path', optional 'max_depth' (default: 2, max: 5), optional 'include_hidden', optional 'pattern' (glob e.g. '*.rs'), optional 'brief' (default: true), optional 'sort_by' (name/type/size/modified), optional 'flatten' (default: false)\nExample: {\"path\": \"/home/user\", \"pattern\": \"*.rs\", \"brief\": true}".to_string(),
-        "file_read" => "Usage: Read text file content with line numbers and large range support.\nParameters: 'path', optional 'start_line' (default: 0), optional 'end_line' (default: 500), optional 'offset_chars', optional 'max_chars' (default: 15000), optional 'line_numbers' (default: true), optional 'highlight_line' (1-based)\nExample: {\"path\": \"/home/user/file.txt\", \"start_line\": 0, \"end_line\": 500}".to_string(),
-        "file_search" => "Usage: Search for keyword and return matching content fragments with context (max depth 5).\nParameters: 'path', 'keyword', optional 'file_pattern' (glob), optional 'use_regex' (default: false), optional 'max_results' (default: 20), optional 'context_lines' (default: 3), optional 'brief' (default: false), optional 'output_format' (detailed/compact/location, default: detailed)\nExample: {\"path\": \"/home/user/src\", \"keyword\": \"TODO\", \"context_lines\": 3}".to_string(),
-        "file_edit" => "Usage: Edit a file using string_replace, line_replace, insert, delete, or patch mode.\nstring_replace: path, old_string, new_string, optional occurrence (1=first default, 0=all)\nline_replace: path, start_line, end_line, new_string\ninsert: path, start_line, new_string\ndelete: path, start_line, end_line\npatch: path, patch (unified diff string)\nExamples: {\"path\": \"main.rs\", \"mode\": \"string_replace\", \"old_string\": \"fn old()\", \"new_string\": \"fn new()\"} | {\"path\": \"main.rs\", \"mode\": \"line_replace\", \"start_line\": 10, \"end_line\": 15, \"new_string\": \"new code\"}".to_string(),
-        "file_write" => "Usage: Write content to a file.\nParameters: 'path', 'content', 'mode' (new/append/overwrite)\nExample: {\"path\": \"test.txt\", \"content\": \"Hello\", \"mode\": \"new\"}".to_string(),
-        "file_ops" => "Usage: Copy, move, delete, or rename files.\nParameters: 'action' (copy/move/delete/rename), 'source' (file path), 'target' (target path or new name), optional 'overwrite' (default: false)\nExamples: {\"action\": \"copy\", \"source\": \"a.txt\", \"target\": \"b.txt\"} | {\"action\": \"delete\", \"source\": \"file.txt\"} | {\"action\": \"rename\", \"source\": \"old.txt\", \"target\": \"new.txt\"}".to_string(),
-        "file_stat" => "Usage: Get file or directory metadata.\nParameters: 'path'\nReturns: name, size, file_type, permissions, modified/created/accessed timestamps\nExample: {\"path\": \"src/main.rs\"}".to_string(),
-        "path_exists" => "Usage: Check if a path exists and get its type.\nParameters: 'path'\nReturns: exists (bool), path_type (file/dir/symlink/none)\nExample: {\"path\": \"src/main.rs\"}".to_string(),
-        "json_query" => "Usage: Query a JSON file using JSON Pointer syntax.\nParameters: 'path', 'query' (JSON Pointer like '/data/0/name'), optional 'max_chars' (default: 15000)\nExample: {\"path\": \"config.json\", \"query\": \"/database/host\"}".to_string(),
-        "git_ops" => "Usage: Run git commands in a repository.\nParameters: 'action' (status/diff/log/branch/show), optional 'repo_path' (default: working_dir), optional 'options' (array of extra args)\nExample: {\"action\": \"status\"} | {\"action\": \"log\", \"options\": [\"--oneline\", \"-n\", \"10\"]}".to_string(),
-        "calculator" => "Usage: Calculate mathematical expressions.\nParameter: 'expression'\nSupports: +, -, *, /, ^, sqrt, sin, cos, tan, log, ln, abs, pi, e\nExample: {\"expression\": \"2 + 3 * 4\"}".to_string(),
-        "http_request" => "Usage: Make HTTP requests with optional JSON extraction and response limiting.\nParameters: 'url', 'method' (GET/POST), optional 'headers', 'body', optional 'extract_json_path' (e.g. '/data/0/name'), optional 'include_response_headers' (default: false), optional 'max_response_chars' (default: 15000)\nExample: {\"url\": \"https://api.example.com\", \"method\": \"GET\"}".to_string(),
-        "datetime" => "Usage: Get current date and time.\nNo parameters required.\nExample: {}".to_string(),
-        "image_read" => "Usage: Read an image file and return base64 data or metadata only.\nParameters: 'path', optional 'mode' (full/metadata, default: full)\nExample: {\"path\": \"image.png\", \"mode\": \"metadata\"}".to_string(),
-        "execute_command" => "Usage: Execute a shell command (disabled by default).\nParameters: 'command', optional 'cwd', optional 'timeout', optional 'shell' (cmd/powershell/pwsh on Windows; sh/bash/zsh on Unix)\nExample: {\"command\": \"ls -la\", \"cwd\": \"/home/user\"}".to_string(),
-        "process_list" => "Usage: List system processes.\nNo parameters required.\nExample: {}".to_string(),
-        "base64_codec" => "Usage: Encode or decode base64 strings.\nParameters: 'operation' (encode/decode), 'input'\nExample: {\"operation\": \"encode\", \"input\": \"Hello, World!\"}".to_string(),
-        "hash_compute" => "Usage: Compute hash of string or file.\nParameters: 'input', 'algorithm' (MD5/SHA1/SHA256)\nFor files, prefix path with 'file:'\nExample: {\"input\": \"hello\", \"algorithm\": \"SHA256\"}".to_string(),
-        "system_info" => "Usage: Get system information.\nNo parameters required.\nExample: {}".to_string(),
-        "env_get" => "Usage: Get the value of an environment variable.\nParameters: 'name'\nExample: {\"name\": \"PATH\"}".to_string(),
+        "dir_list" => r#"Usage: List directory contents with filtering and brief mode (max depth 5). Returns char_count and line_count for UTF-8 text files. Not restricted to working directory.
+Parameters: path, optional max_depth (default: 2, max: 5), optional include_hidden, optional pattern (glob e.g. *.rs), optional brief (default: true), optional sort_by (name/type/size/modified), optional flatten (default: false)
+Example: {"path": "/home/user", "pattern": "*.rs", "brief": true}"#.to_string(),
+        "file_read" => r#"Usage: Read one or more text files concurrently with line numbers and range support. Not restricted to working directory.
+Parameters: files (list of file items), each with path, optional start_line (default: 0), optional end_line (default: 500), optional offset_chars, optional max_chars (default: 15000), optional line_numbers (default: true), optional highlight_line (1-based)
+Example: {"files": [{"path": "a.txt", "start_line": 0, "end_line": 100}, {"path": "b.txt", "start_line": 0, "end_line": 50}]}"#.to_string(),
+        "file_search" => r#"Usage: Search for keyword and return matching content fragments with context (max depth 5). Not restricted to working directory.
+Parameters: path, keyword, optional file_pattern (glob), optional use_regex (default: false), optional max_results (default: 20), optional context_lines (default: 3), optional brief (default: false), optional output_format (detailed/compact/location, default: detailed)
+Example: {"path": "/home/user/src", "keyword": "TODO", "context_lines": 3}"#.to_string(),
+        "file_edit" => r#"Usage: Edit one or more files concurrently using string_replace, line_replace, insert, delete, or patch mode. string_replace, line_replace, and insert can create new files if they do not exist.
+Parameters: operations (list of operations), each with path, mode, and mode-specific args.
+string_replace: path, old_string, new_string, optional occurrence (1=first default, 0=all). Creates new file if not exists and new_string is provided.
+line_replace: path, start_line, end_line, new_string. Creates new file if not exists and new_string is provided.
+insert: path, start_line, new_string. Creates new file if not exists and new_string is provided.
+delete: path, start_line, end_line
+patch: path, patch (unified diff string)
+Example: {"operations": [{"path": "main.rs", "mode": "string_replace", "old_string": "fn old()", "new_string": "fn new()"}, {"path": "new.rs", "mode": "insert", "new_string": "fn main() {}"}]}"#.to_string(),
+        "file_write" => r#"Usage: Write content to one or more files concurrently.
+Parameters: files (list of file items), each with path, content, optional mode (new/append/overwrite, default: new)
+Example: {"files": [{"path": "test.txt", "content": "Hello", "mode": "new"}, {"path": "log.txt", "content": "Line", "mode": "append"}]}"#.to_string(),
+        "file_ops" => r#"Usage: Copy, move, delete, or rename one or more files concurrently.
+Parameters: operations (list of operations), each with action (copy/move/delete/rename), source, optional target, optional overwrite (default: false)
+Example: {"operations": [{"action": "copy", "source": "a.txt", "target": "b.txt"}, {"action": "delete", "source": "file.txt"}]}"#.to_string(),
+        "file_stat" => r#"Usage: Get metadata for one or more files or directories concurrently. Not restricted to working directory.
+Parameters: paths (list of paths)
+Returns: name, size, file_type, readable, writable, modified/created/accessed. For UTF-8 text files, also includes is_text, char_count, line_count, encoding
+Example: {"paths": ["src/main.rs", "Cargo.toml"]}"#.to_string(),
+        "path_exists" => r#"Usage: Check if a path exists and get its type. Not restricted to working directory.
+Parameters: path
+Returns: exists (bool), path_type (file/dir/symlink/none)
+Example: {"path": "src/main.rs"}"#.to_string(),
+        "json_query" => r#"Usage: Query a JSON file using JSON Pointer syntax. Not restricted to working directory.
+Parameters: path, query (JSON Pointer like /data/0/name), optional max_chars (default: 15000)
+Example: {"path": "config.json", "query": "/database/host"}"#.to_string(),
+        "git_ops" => r#"Usage: Run git commands in a repository. Not restricted to working directory.
+Parameters: action (status/diff/log/branch/show), optional repo_path (default: working_dir), optional options (array of extra args)
+Example: {"action": "status"} | {"action": "log", "options": ["--oneline", "-n", "10"]}"#.to_string(),
+        "calculator" => r#"Usage: Calculate mathematical expressions.
+Parameter: expression
+Supports: +, -, *, /, ^, sqrt, sin, cos, tan, log, ln, abs, pi, e
+Example: {"expression": "2 + 3 * 4"}"#.to_string(),
+        "http_request" => r#"Usage: Make HTTP requests with optional JSON extraction and response limiting.
+Parameters: url, method (GET/POST), optional headers, body, optional extract_json_path (e.g. /data/0/name), optional include_response_headers (default: false), optional max_response_chars (default: 15000)
+Example: {"url": "https://api.example.com", "method": "GET"}"#.to_string(),
+        "datetime" => r#"Usage: Get current date and time.
+No parameters required.
+Example: {}"#.to_string(),
+        "image_read" => r#"Usage: Read an image file and return base64 data or metadata only. Not restricted to working directory.
+Parameters: path, optional mode (full/metadata, default: full)
+Example: {"path": "image.png", "mode": "metadata"}"#.to_string(),
+        "execute_command" => r#"Usage: Execute a shell command (disabled by default).
+Parameters: command, optional cwd, optional timeout, optional shell (cmd/powershell/pwsh on Windows; sh/bash/zsh on Unix)
+Example: {"command": "ls -la", "cwd": "/home/user"}"#.to_string(),
+        "process_list" => r#"Usage: List system processes.
+No parameters required.
+Example: {}"#.to_string(),
+        "base64_codec" => r#"Usage: Encode or decode base64 strings.
+Parameters: operation (encode/decode), input
+Example: {"operation": "encode", "input": "Hello, World!"}"#.to_string(),
+        "hash_compute" => r#"Usage: Compute hash of string or file. Not restricted to working directory.
+Parameters: input, algorithm (MD5/SHA1/SHA256)
+For files, prefix path with file:
+Example: {"input": "hello", "algorithm": "SHA256"}"#.to_string(),
+        "system_info" => r#"Usage: Get system information.
+No parameters required.
+Example: {}"#.to_string(),
+        "env_get" => r#"Usage: Get the value of an environment variable.
+Parameters: name
+Example: {"name": "PATH"}"#.to_string(),
+        "execute_python" => r#"Usage: Execute Python code with filesystem access (dangerous).
+Parameters: code (Python code), optional timeout_ms (default: 5000, max: 30000)
+Set the variable __result to return a value. If not set, the last line is automatically evaluated as an expression.
+The global variable __working_dir contains the server working directory.
+Example: {"code": "import math\n__result = math.pi * 2"}"#.to_string(),
         _ => "No usage information available.".to_string(),
     }
 }

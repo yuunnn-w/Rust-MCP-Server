@@ -34,7 +34,7 @@ Rust MCP Server is a high-performance [Model Context Protocol (MCP)](https://mod
 ## Features
 
 ### Core Features
-- **20 Built-in Tools**: File operations, HTTP requests, calculations, system info, base64 codec, git operations, JSON queries, and more
+- **21 Built-in Tools**: File operations, HTTP requests, calculations, system info, base64 codec, git operations, JSON queries, Python execution, and more
 - **WebUI Control Panel**: Cyberpunk AI Command Center theme with glassmorphism HUD, animated background, terminal log stream, and 3D card tilt effects
 - **Real-time Updates**: SSE-based live status updates in WebUI
 - **System Metrics**: Real-time CPU, memory, and load monitoring via HUD and `/api/system-metrics` endpoint
@@ -43,7 +43,7 @@ Rust MCP Server is a high-performance [Model Context Protocol (MCP)](https://mod
 - **Internationalization**: Support for English and Chinese
 
 ### Security Features
-- **Working Directory Restriction**: Dangerous operations restricted to configured directory
+- **Working Directory Restriction**: Write operations restricted to configured directory; read-only tools can access any path
 - **Dangerous Command Blacklist**: 20 configurable dangerous command patterns
 - **Command Injection Detection**: Automatic detection of suspicious characters
 - **Two-Step Confirmation**: Dangerous commands require user confirmation
@@ -51,23 +51,27 @@ Rust MCP Server is a high-performance [Model Context Protocol (MCP)](https://mod
 
 ### Available Tools
 
-#### File Operations (Safe)
+#### File Operations (Safe / Enabled by Default)
+The following read-only tools are **not** restricted to the working directory:
+
 | Tool | Description | Dangerous |
 |------|-------------|-----------|
-| `dir_list` | List directory contents with tree or flat structure | No |
-| `file_read` | Read text file content with line range and highlight support | No |
+| `dir_list` | List directory contents with tree or flat structure, includes text file metadata (char_count, line_count) | No |
+| `file_read` | Read one or more text files concurrently with line range and highlight support | No |
 | `file_search` | Search for keywords with detailed/compact/location output | No |
-| `file_edit` | Multi-mode editing: string_replace, line_replace, insert, delete, patch | Yes |
-| `file_stat` | Get file/directory metadata (size, permissions, timestamps) | No |
+| `file_stat` | Get metadata for one or more files or directories concurrently, includes text detection (is_text, char_count, line_count) | No |
 | `path_exists` | Lightweight path existence check | No |
 | `json_query` | Query JSON files using JSON Pointer | No |
 | `image_read` | Read image file and return MCP-standard ImageContent (for vision encoders) plus metadata | No |
 
-#### File Operations (Dangerous - Disabled by Default)
+#### File Operations (Dangerous / Disabled by Default)
+The following write operations are **restricted** to the working directory:
+
 | Tool | Description | Security Check |
 |------|-------------|----------------|
-| `file_write` | Write content to file | Working directory check |
-| `file_ops` | Copy, move, delete, or rename files | Working directory check |
+| `file_edit` | Multi-mode editing: string_replace, line_replace, insert, delete, patch. Can create new files. Supports concurrent batch operations. | Working directory check |
+| `file_write` | Write content to one or more files concurrently | Working directory check |
+| `file_ops` | Copy, move, delete, or rename one or more files concurrently | Working directory check |
 
 #### System & Network Tools
 | Tool | Description | Default Status |
@@ -78,6 +82,7 @@ Rust MCP Server is a high-performance [Model Context Protocol (MCP)](https://mod
 | `http_request` | Make HTTP GET/POST requests | Disabled |
 | `git_ops` | Run git commands (status, diff, log, branch, show) | Enabled |
 | `env_get` | Get environment variable values | Enabled |
+| `execute_python` | Execute Python code in a sandboxed environment (safe by default, filesystem access toggleable) | Enabled |
 
 #### Utility Tools
 | Tool | Description |
@@ -168,7 +173,7 @@ http://127.0.0.1:2233
 | `--disable-allowed-hosts` | `MCP_DISABLE_ALLOWED_HOSTS` | - | Disable DNS rebinding protection (not recommended for public) |
 
 **Default Tool Status:**
-- **Enabled by default (10):** `calculator`, `dir_list`, `file_read`, `file_search`, `image_read`, `file_stat`, `path_exists`, `json_query`, `git_ops`, `env_get`
+- **Enabled by default (11):** `calculator`, `dir_list`, `file_read`, `file_search`, `image_read`, `file_stat`, `path_exists`, `json_query`, `git_ops`, `env_get`, `execute_python`
 - **Disabled by default (10):** `file_write`, `file_ops`, `file_edit`, `http_request`, `datetime`, `execute_command`, `process_list`, `base64_codec`, `hash_compute`, `system_info`
 
 ### Dangerous Command IDs
@@ -214,7 +219,7 @@ The `execute_command` tool implements multiple security layers:
 
 ### File Operation Security
 
-All file operations are restricted to the configured working directory:
+Write file operations are restricted to the configured working directory. Read-only tools can access any path on the filesystem:
 - Path traversal attacks (`../etc/passwd`) are blocked
 - Symbolic link escaping is prevented
 - Absolute paths outside working directory are rejected

@@ -67,7 +67,7 @@ WebUI 提供 Cyberpunk AI Command Center 控制面板：
 
 ### 启用/禁用工具
 
-**重要提示:** 默认情况下，以下 10 个工具为安全起见是启用的：`calculator`、`dir_list`、`file_read`、`file_search`、`image_read`、`file_stat`、`path_exists`、`json_query`、`git_ops`、`env_get`。
+**重要提示:** 默认情况下，以下 11 个工具为安全起见是启用的：`calculator`、`dir_list`、`file_read`、`file_search`、`image_read`、`file_stat`、`path_exists`、`json_query`、`git_ops`、`env_get`、`execute_python`。
 
 1. 打开 WebUI 访问 `http://127.0.0.1:2233`
 2. 在工具网格中找到对应工具卡片
@@ -118,47 +118,68 @@ WebUI 提供 Cyberpunk AI Command Center 控制面板：
 ```
 
 #### file_read
-读取文本文件内容，支持行范围。
+并发读取一个或多个文本文件内容，支持行范围。
 
 **参数：**
-- `path` (string): 文件路径
-- `start_line` (number, 可选): 起始行（从0开始，默认：0）
-- `end_line` (number, 可选): 结束行（默认：500）
-- `offset_chars` (number, 可选): 字符偏移量，作为 start_line 的替代
-- `max_chars` (number, 可选): 最大返回字符数（默认：15000）
-- `line_numbers` (boolean, 可选): 每行前添加行号（默认：true）
-- `highlight_line` (number, 可选): 高亮指定行，在输出中用 `>>> ` 标记
+- `files` (array): 要读取的文件列表
+  - `path` (string): 文件路径
+  - `start_line` (number, 可选): 起始行（从0开始，默认：0）
+  - `end_line` (number, 可选): 结束行（默认：500）
+  - `offset_chars` (number, 可选): 字符偏移量，作为 start_line 的替代
+  - `max_chars` (number, 可选): 最大返回字符数（默认：15000）
+  - `line_numbers` (boolean, 可选): 每行前添加行号（默认：true）
+  - `highlight_line` (number, 可选): 高亮指定行，在输出中用 `>>> ` 标记
 
 **特性：**
+- 支持并发读取多个文件
 - 每次读取限制 15KB 字符（可通过 `max_chars` 调整）
 - 超出自动截断并提供精确的继续读取提示
-- 返回总行数
+- 每个文件返回独立的总行数
 - 行号前缀便于引用
 
 **示例：**
 ```json
 {
-  "path": "config.json",
-  "start_line": 0,
-  "end_line": 500,
-  "line_numbers": true
+  "files": [
+    {
+      "path": "config.json",
+      "start_line": 0,
+      "end_line": 500,
+      "line_numbers": true
+    },
+    {
+      "path": "src/main.rs",
+      "start_line": 0,
+      "end_line": 100
+    }
+  ]
 }
 ```
 
 #### file_write
-写入内容到文件（危险操作）。
+并发写入内容到一个或多个文件（危险操作）。
 
 **参数：**
-- `path` (string): 文件路径
-- `content` (string): 要写入的内容
-- `mode` (string, 可选): "new" | "append" | "overwrite"（默认："new"）
+- `files` (array): 要写入的文件列表
+  - `path` (string): 文件路径
+  - `content` (string): 要写入的内容
+  - `mode` (string, 可选): "new" | "append" | "overwrite"（默认："new"）
 
 **示例：**
 ```json
 {
-  "path": "output.txt",
-  "content": "Hello, World!",
-  "mode": "new"
+  "files": [
+    {
+      "path": "output.txt",
+      "content": "Hello, World!",
+      "mode": "new"
+    },
+    {
+      "path": "log.txt",
+      "content": "日志条目\n",
+      "mode": "append"
+    }
+  ]
 }
 ```
 
@@ -194,11 +215,12 @@ WebUI 提供 Cyberpunk AI Command Center 控制面板：
 ```
 
 #### file_edit
-多模式文件编辑 — 支持字符串替换、行级操作和统一差异补丁（无需重写整个文件的安全编辑方式）。
+多模式文件编辑 — 支持字符串替换、行级操作和统一差异补丁。支持并发批量操作和创建新文件。
 
 **参数：**
-- `path` (string): 要编辑的文件路径
-- `mode` (string, 可选): `"string_replace"`（默认）、`"line_replace"`、`"insert"`、`"delete"`、`"patch"`
+- `operations` (array): 编辑操作列表
+  - `path` (string): 要编辑的文件路径
+  - `mode` (string, 可选): `"string_replace"`（默认）、`"line_replace"`、`"insert"`、`"delete"`、`"patch"`
 
 **string_replace 模式：**
 - `old_string` (string): 要查找的字符串（精确匹配，可跨多行）
@@ -214,54 +236,58 @@ WebUI 提供 Cyberpunk AI Command Center 控制面板：
 - `patch` (string): 统一差异补丁字符串
 
 **特性：**
-- `string_replace`: 精确字符串匹配，支持多行
-- `line_replace`: 按行号替换 — LLM 无需输出旧内容
-- `insert`: 在指定行前插入内容
-- `delete`: 删除指定范围的行
-- `patch`: 应用标准统一差异补丁，支持多位置复杂修改
+- `string_replace`: 精确字符串匹配，支持多行。如果文件不存在且提供了 new_string，则创建新文件。
+- `line_replace`: 按行号替换 — LLM 无需输出旧内容。如果文件不存在且提供了 new_string，则创建新文件。
+- `insert`: 在指定行前插入内容。如果文件不存在且提供了 new_string，则创建新文件。
+- `delete`: 删除指定范围的行（要求文件已存在）
+- `patch`: 应用标准统一差异补丁，支持多位置复杂修改（要求文件已存在）
 - 所有模式均返回替换摘要及预览
+- 支持并发执行多个操作
 
 **示例：**
 ```json
-// 字符串替换
+// 单操作
 {
-  "path": "src/main.rs",
-  "mode": "string_replace",
-  "old_string": "fn main() {",
-  "new_string": "fn main() -> Result<(), Box<dyn std::error::Error>> {",
-  "occurrence": 1
+  "operations": [
+    {
+      "path": "src/main.rs",
+      "mode": "string_replace",
+      "old_string": "fn main() {",
+      "new_string": "fn main() -> Result<(), Box<dyn std::error::Error>> {",
+      "occurrence": 1
+    }
+  ]
 }
 
-// 行替换（无需 old_string！）
+// 并发批量操作
 {
-  "path": "src/main.rs",
-  "mode": "line_replace",
-  "start_line": 10,
-  "end_line": 15,
-  "new_string": "    let x = 42;\n    println!(\"{}\", x);"
+  "operations": [
+    {
+      "path": "src/main.rs",
+      "mode": "line_replace",
+      "start_line": 10,
+      "end_line": 15,
+      "new_string": "    let x = 42;\n    println!(\"{}\", x);"
+    },
+    {
+      "path": "src/lib.rs",
+      "mode": "insert",
+      "start_line": 5,
+      "new_string": "use std::fs;"
+    }
+  ]
 }
 
-// 在第 5 行前插入
+// 创建新文件
 {
-  "path": "src/main.rs",
-  "mode": "insert",
-  "start_line": 5,
-  "new_string": "use std::fs;"
-}
-
-// 删除第 8-12 行
-{
-  "path": "src/main.rs",
-  "mode": "delete",
-  "start_line": 8,
-  "end_line": 12
-}
-
-// 统一差异补丁
-{
-  "path": "src/main.rs",
-  "mode": "patch",
-  "patch": "@@ -10,3 +10,3 @@\n fn old() {\n-    let x = 1;\n+    let x = 42;\n }"
+  "operations": [
+    {
+      "path": "src/new_module.rs",
+      "mode": "string_replace",
+      "old_string": "",
+      "new_string": "pub fn hello() {\n    println!(\"Hello\");\n}"
+    }
+  ]
 }
 ```
 
@@ -289,6 +315,47 @@ WebUI 提供 Cyberpunk AI Command Center 控制面板：
   "cwd": "/home/user",
   "timeout": 30,
   "shell": "bash"
+}
+```
+
+#### execute_python
+在沙箱环境中执行 Python 代码（默认安全）。适用于精确计算、数据处理和逻辑评估。
+
+**沙箱模式（默认）：**
+- 文件系统访问被禁用（`open()`、`os` 模块被阻止）
+- 可用标准库模块：`math`、`random`、`statistics`、`datetime`、`itertools`、`functools`、`collections`、`re`、`string`、`json`、`fractions`、`decimal`、`typing`、`hashlib`、`base64`、`bisect`、`heapq`、`copy`、`pprint`、`enum`、`types`、`dataclasses`、`inspect`、`sys`
+- 将返回值赋给 `__result`；若未设置，最后一行自动作为表达式求值
+
+**文件系统模式：**
+- 通过 WebUI 上 `execute_python` 卡片的"文件系统"开关启用
+- 启用后，`__working_dir` 被注入到全局变量中
+- 所有 Python 文件操作被限制在配置的工作目录内
+
+**参数：**
+- `code` (string): 要执行的 Python 代码
+- `timeout_ms` (number, 可选): 超时时间（毫秒，默认：5000，最大：30000）
+
+**参数：**
+- `code` (string): 要执行的 Python 代码
+- `timeout_ms` (number, 可选): 超时毫秒数（默认：5000，最大：30000）
+
+**返回：**
+- `result`: `__result` 变量的值（或未设置时自动求值的末行表达式结果）
+- `stdout`: 捕获的标准输出
+- `stderr`: 捕获的标准错误/提示
+- `execution_time_ms`: 执行耗时（毫秒）
+
+**说明：**
+- 将返回值赋给变量 `__result`
+- 若未设置 `__result`，最后一行将自动作为表达式求值
+- 全局变量 `__working_dir` 包含服务器工作目录
+- 支持 Python 标准库模块（math、random、statistics、datetime 等）
+
+**示例：**
+```json
+{
+  "code": "import math\n__result = math.pi * 2",
+  "timeout_ms": 5000
 }
 ```
 
@@ -380,10 +447,10 @@ Base64 编码或解码。
 ```
 
 #### file_stat
-获取文件或目录的元数据。
+并发获取一个或多个文件或目录的元数据。
 
 **参数：**
-- `path` (string): 文件或目录路径
+- `paths` (array): 文件或目录路径列表
 
 **返回：**
 - `name`、`path`、`exists`
@@ -393,11 +460,15 @@ Base64 编码或解码。
 - `readable`、`writable`、`executable`: 权限布尔值
 - `modified`、`created`、`accessed`: 时间戳字符串
 - `is_symlink`: 是否为符号链接
+- `is_text`: 文件是否为有效的 UTF-8 文本文件
+- `char_count`: 字符数（仅文本文件）
+- `line_count`: 行数（仅文本文件）
+- `encoding`: 检测到的编码（例如 "utf-8"）
 
 **示例：**
 ```json
 {
-  "path": "src/main.rs"
+  "paths": ["src/main.rs", "Cargo.toml", "src/"]
 }
 ```
 
@@ -540,13 +611,15 @@ MCP_DISABLE_TOOLS=file_write,execute_command
 
 ### 工作目录限制
 
-所有文件操作都被限制在配置的工作目录内：
+只读文件工具（`dir_list`、`file_read`、`file_search`、`file_stat`、`path_exists`、`json_query`、`image_read`、`hash_compute`、`git_ops`）**不受**工作目录限制。
+
+写操作工具（`file_write`、`file_edit`、`file_ops`）以及执行类工具（`execute_command`、`execute_python`）被限制在配置的工作目录内：
 
 ```bash
 ./rust-mcp-server --working-dir /var/mcp-safe
 ```
 
-路径穿越尝试（`../`）会被阻止。
+路径穿越尝试（`../`）对受限工具会被阻止。
 
 ### 危险命令黑名单
 

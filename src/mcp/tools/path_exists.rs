@@ -1,4 +1,4 @@
-use crate::utils::file_utils::ensure_path_within_working_dir;
+use crate::utils::file_utils::resolve_path;
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::model::CallToolResult;
 use rmcp::schemars::JsonSchema;
@@ -26,7 +26,7 @@ pub async fn path_exists(
     let params = params.0;
     let path = Path::new(&params.path);
 
-    let canonical_path = ensure_path_within_working_dir(path, working_dir)?;
+    let canonical_path = resolve_path(path, working_dir)?;
 
     let (exists, path_type) = if !canonical_path.exists() {
         (false, "none".to_string())

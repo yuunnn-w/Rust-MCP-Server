@@ -15,7 +15,7 @@ Get all tools with their current status.
   "tools": [
     {
       "name": "file_read",
-      "description": "Read text file content with line range support",
+      "description": "Read text file content with line range support. Not restricted to working directory.",
       "enabled": true,
       "call_count": 42,
       "is_calling": false,
@@ -24,7 +24,7 @@ Get all tools with their current status.
     },
     {
       "name": "execute_command",
-      "description": "Execute shell command in specified directory",
+      "description": "Execute shell command in specified directory (restricted to working directory)",
       "enabled": false,
       "call_count": 5,
       "is_calling": false,
@@ -206,6 +206,38 @@ Restart MCP service.
 }
 ```
 
+### Python Filesystem Access Toggle
+
+#### GET /api/python-fs-access
+Get the current filesystem access status for the `execute_python` tool.
+
+**Response:**
+```json
+{
+  "enabled": false
+}
+```
+
+#### POST /api/python-fs-access
+Enable or disable filesystem access for the `execute_python` tool.
+
+**Request:**
+```json
+{
+  "enabled": true
+}
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "enabled": true
+}
+```
+
+**Note:** When filesystem access is disabled (default), `execute_python` runs in sandbox mode where `builtins.open`, `_io.FileIO`, and `os`/`nt`/`posix` modules are blocked. When enabled, Python code can access files within the configured working directory.
+
 ### Search
 
 #### GET /api/search?q={query}
@@ -319,33 +351,55 @@ Response:
     "tools": [
       {
         "name": "file_read",
-        "description": "Read text file content with line range support",
+        "description": "Read one or more text files concurrently with line numbers and range support",
         "inputSchema": {
           "type": "object",
           "properties": {
-            "path": {"type": "string"},
-            "start_line": {"type": "integer"},
-            "end_line": {"type": "integer"},
-            "highlight_line": {"type": "integer"}
+            "files": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "path": {"type": "string"},
+                  "start_line": {"type": "integer"},
+                  "end_line": {"type": "integer"},
+                  "offset_chars": {"type": "integer"},
+                  "max_chars": {"type": "integer"},
+                  "line_numbers": {"type": "boolean"},
+                  "highlight_line": {"type": "integer"}
+                },
+                "required": ["path"]
+              }
+            }
           },
-          "required": ["path"]
+          "required": ["files"]
         }
       },
       {
         "name": "file_edit",
-        "description": "Edit file using string_replace, line_replace, insert, delete, or patch mode",
+        "description": "Edit one or more files concurrently using string_replace, line_replace, insert, delete, or patch mode. Can create new files.",
         "inputSchema": {
           "type": "object",
           "properties": {
-            "path": {"type": "string"},
-            "mode": {"type": "string"},
-            "old_string": {"type": "string"},
-            "new_string": {"type": "string"},
-            "start_line": {"type": "integer"},
-            "end_line": {"type": "integer"},
-            "patch": {"type": "string"}
+            "operations": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "path": {"type": "string"},
+                  "mode": {"type": "string"},
+                  "old_string": {"type": "string"},
+                  "new_string": {"type": "string"},
+                  "occurrence": {"type": "integer"},
+                  "start_line": {"type": "integer"},
+                  "end_line": {"type": "integer"},
+                  "patch": {"type": "string"}
+                },
+                "required": ["path"]
+              }
+            }
           },
-          "required": ["path"]
+          "required": ["operations"]
         }
       },
       {
@@ -362,13 +416,16 @@ Response:
       },
       {
         "name": "file_stat",
-        "description": "Get file or directory metadata",
+        "description": "Get metadata for one or more files or directories concurrently",
         "inputSchema": {
           "type": "object",
           "properties": {
-            "path": {"type": "string"}
+            "paths": {
+              "type": "array",
+              "items": {"type": "string"}
+            }
           },
-          "required": ["path"]
+          "required": ["paths"]
         }
       },
       {
@@ -405,6 +462,18 @@ Response:
           },
           "required": ["name"]
         }
+      },
+      {
+        "name": "execute_python",
+        "description": "Execute Python code in a sandboxed environment (safe by default). Set __result for return value. Available modules: math, random, statistics, datetime, itertools, functools, collections, re, string, json, fractions, decimal, typing, hashlib, base64, bisect, heapq, copy, pprint, enum, types, dataclasses, inspect, sys. Filesystem access is toggleable via WebUI.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "code": {"type": "string", "description": "Python code to execute"},
+            "timeout_ms": {"type": "integer", "minimum": 1000, "maximum": 30000, "default": 5000}
+          },
+          "required": ["code"]
+        }
       }
     ]
   }
@@ -422,9 +491,9 @@ Request:
   "params": {
     "name": "file_read",
     "arguments": {
-      "path": "/path/to/file.txt",
-      "start_line": 0,
-      "end_line": 100
+      "files": [
+        {"path": "/path/to/file.txt", "start_line": 0, "end_line": 100}
+      ]
     }
   }
 }
@@ -477,7 +546,7 @@ Error Response:
   "error": {
     "code": -32602,
     "message": "Invalid params",
-    "data": "Path is outside working directory"
+    "data": "Path is outside working directory (write operation)"
   }
 }
 ```

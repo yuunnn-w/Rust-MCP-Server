@@ -1,4 +1,4 @@
-use crate::utils::file_utils::ensure_path_within_working_dir;
+use crate::utils::file_utils::resolve_path;
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::model::CallToolResult;
 use rmcp::schemars::JsonSchema;
@@ -64,8 +64,8 @@ async fn compute_file_hash(
 ) -> Result<String, String> {
     let path = Path::new(file_path);
 
-    // Security check: ensure path is within working directory
-    let canonical_path = ensure_path_within_working_dir(path, working_dir)?;
+    // Resolve path without working directory restriction (read-only operation)
+    let canonical_path = resolve_path(path, working_dir)?;
 
     if !canonical_path.exists() {
         return Err(format!("File '{}' does not exist", file_path));
