@@ -105,7 +105,7 @@ WebUI 提供了一个现代化的控制面板来管理 MCP 服务器。
 | `process_list` | 列出系统进程 | 否 | 否 |
 | `system_info` | 获取系统信息 | 否 | 否 |
 | `execute_command` | 在指定目录执行 shell 命令 | 是 | 是 |
-| `execute_python` | 在沙箱环境中执行 Python 代码（文件系统访问可通过 WebUI 切换） | 否 | 是（仅在启用文件系统访问时） |
+| `execute_python` | 执行 Python 代码。所有 Python 标准库模块均可使用。文件系统访问可通过 WebUI 切换。 | 否 | 是（仅在启用文件系统访问时） |
 
 #### 实用工具类（4 个工具）
 | 工具名 | 描述 | 危险操作 | 工作目录限制 |

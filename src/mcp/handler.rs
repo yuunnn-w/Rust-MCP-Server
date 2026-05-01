@@ -207,7 +207,7 @@ impl McpHandler {
         tool_result(env_get::env_get(params).await)
     }
 
-    #[tool(description = "Execute Python code for calculations, data processing, and logic evaluation. Set __result for return value. Available modules: math, random, statistics, datetime, itertools, functools, collections, re, string, json, fractions, decimal, typing, hashlib, base64, bisect, heapq, copy, pprint, enum, types, dataclasses, inspect, sys. Filesystem access is controlled by a separate toggle.")]
+    #[tool(description = "Execute Python code for calculations, data processing, and logic evaluation. Set __result for return value. All Python standard library modules are available.")]
     async fn execute_python(
         &self,
         params: Parameters<execute_python::ExecutePythonParams>,
@@ -428,7 +428,7 @@ impl ServerHandler for McpHandler {
     ) -> Result<ListToolsResult, McpError> {
         let all_tools = self.tool_router.list_all();
         let total_count = all_tools.len();
-        let allow_fs = self.state.is_python_fs_access_enabled().await;
+        let _allow_fs = self.state.is_python_fs_access_enabled().await;
         
         let mut tools: Vec<Tool> = all_tools
             .into_iter()
@@ -439,16 +439,13 @@ impl ServerHandler for McpHandler {
             })
             .collect();
         
-        // Dynamically update execute_python description based on fs access status
+        // execute_python description is static and uniform; filesystem status is communicated
+        // through execution error messages when sandbox restrictions are hit.
         for tool in &mut tools {
             if tool.name.as_ref() == "execute_python" {
-                let base_desc = "Execute Python code for calculations, data processing, and logic evaluation. Set __result for return value. Available modules: math, random, statistics, datetime, itertools, functools, collections, re, string, json, fractions, decimal, typing, hashlib, base64, bisect, heapq, copy, pprint, enum, types, dataclasses, inspect, sys.";
-                let suffix = if allow_fs {
-                    " Filesystem access is currently ENABLED."
-                } else {
-                    " Filesystem access is currently DISABLED (sandboxed)."
-                };
-                tool.description = Some(std::borrow::Cow::Owned(format!("{}{}", base_desc, suffix)));
+                tool.description = Some(std::borrow::Cow::Borrowed(
+                    "Execute Python code for calculations, data processing, and logic evaluation. Set __result for return value. All Python standard library modules are available."
+                ));
             }
         }
         

@@ -494,7 +494,7 @@ Response:
       },
       {
         "name": "execute_python",
-        "description": "Execute Python code in a sandboxed environment (filesystem access is disabled by default; safe). Set __result for return value. Available modules: math, random, statistics, datetime, itertools, functools, collections, re, string, json, fractions, decimal, typing, hashlib, base64, bisect, heapq, copy, pprint, enum, types, dataclasses, inspect, sys. Filesystem access is toggleable via WebUI.",
+        "description": "Execute Python code for calculations, data processing, and logic evaluation. Set __result for return value. All Python standard library modules are available. Filesystem access is toggleable via WebUI.",
         "inputSchema": {
           "type": "object",
           "properties": {

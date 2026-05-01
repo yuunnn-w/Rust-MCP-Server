@@ -112,7 +112,7 @@ Implements the Model Context Protocol using the `rmcp` crate.
 | `process_list` | List system processes | No | No |
 | `system_info` | Get system information | No | No |
 | `execute_command` | Execute shell command in specified directory | Yes | Yes |
-| `execute_python` | Execute Python code in a sandboxed environment (filesystem access toggleable) | No | Yes (when fs access enabled) |
+| `execute_python` | Execute Python code. All Python standard library modules are available. Filesystem access is toggleable via WebUI. | No | Yes (when fs access enabled) |
 
 #### Utility Tools (4 tools)
 | Tool | Description | Dangerous |

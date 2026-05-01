@@ -75,7 +75,7 @@ async-stream = "0.3"
 
 # Python sandbox execution
 rustpython-vm = { version = "0.5.0", default-features = false, features = ["compiler", "gc", "freeze-stdlib", "host_env", "stdio"] }
-rustpython-stdlib = { version = "0.5.0", default-features = false, features = ["compiler"] }
+rustpython-stdlib = { version = "0.5.0", default-features = false, features = ["compiler", "host_env", "ssl-rustls"] }
 rustpython-pylib = { version = "0.5.0", default-features = false, features = ["freeze-stdlib"] }
 
 [build-dependencies]

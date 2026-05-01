@@ -9,10 +9,12 @@
 
 ### 新增功能
 - 新增工具 `execute_python`：基于 RustPython 解释器执行 Python 代码，支持本地文件系统访问。具备 stdout/stderr 捕获、超时控制（1-30秒）、自动末行表达式求值、`__working_dir` 全局变量注入等特性。文件系统访问默认禁用（沙箱模式）；该工具本身是安全工具，默认启用。
+- **完整的 Python 标准库支持**：在 `rustpython-stdlib` 中启用 `host_env` 和 `ssl-rustls` 特性，使网络模块（`socket`、`urllib`、`http`、`ssl`）在沙箱模式和文件系统模式下均可用。
+- **内置 HTTP 请求能力**：基于 `urllib` 的 HTTP 请求现在可在 Python 解释器内直接使用，无需外部依赖。
 
 ### 安全
 - `execute_python` 默认以沙箱模式运行（文件系统访问禁用）。该工具本身是安全工具，默认启用。如需开启文件系统访问，请通过 WebUI 谨慎启用。
-- **Python 沙箱加固**：扩展模块黑名单，新增 `subprocess`、`socket`、`urllib`、`http.client`、`ctypes`、`platform`、`importlib`。修复 `_io.open` 沙箱绕过漏洞。启用文件系统访问时，`open()` 被限制在工作目录内。
+- **Python 沙箱加固**：将模块黑名单策略替换为文件系统函数拦截策略。保留 `os` 模块可用性，使网络标准库模块（`socket`、`urllib`、`http`）能够正常工作，但所有 `os` 文件系统函数（`open`、`listdir`、`mkdir`、`remove`、`rename`、`stat`、`walk` 等）在沙箱模式下被阻塞。`subprocess` 和 `ctypes` 仍作为安全基线被阻止。启用文件系统访问时，`open()` 和 `os` 文件系统函数均被限制在工作目录内。
 - **HTTP SSRF 防护**：新增 IPv4 映射 IPv6 地址拦截（`::ffff:127.0.0.1`），禁用自动重定向，并为全局 HTTP 客户端配置连接超时和连接池限制。
 - **命令执行安全**：超时后通过 `Child::kill()` 终止子进程，而非仅取消等待。新增命令长度限制（10,000 字符）。注入检测新增换行符（`\n`、`\r`），并正确处理引号内的反斜杠转义。
 - **文件操作加固**：重命名操作通过 `ensure_path_within_working_dir` 校验目标路径。跨文件系统移动时自动回退到复制+删除。消除 TOCTOU 竞态条件，移除 copy/move/delete/rename 前的预检查，直接依赖操作系统错误返回。

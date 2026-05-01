@@ -9,10 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - New tool `execute_python`: Execute Python code in a RustPython interpreter with local filesystem access. Supports stdout/stderr capture, timeout control (1-30s), automatic last-line expression evaluation, and `__working_dir` injection. Filesystem access is disabled by default (sandboxed); the tool itself is safe and enabled by default.
+- **Full Python standard library support**: Enabled `host_env` and `ssl-rustls` features in `rustpython-stdlib`, making network modules (`socket`, `urllib`, `http`, `ssl`) available in both sandbox and filesystem modes.
+- **Embedded HTTP helper**: `urllib`-based HTTP requests now work inside the Python interpreter without external dependencies.
 
 ### Security
 - `execute_python` runs in sandbox mode by default (filesystem access disabled). It is classified as a safe tool and enabled by default. Filesystem access can be enabled with caution via WebUI.
-- **Python sandbox hardening**: Expanded module blacklist to include `subprocess`, `socket`, `urllib`, `http.client`, `ctypes`, `platform`, and `importlib`. Fixed `_io.open` sandbox bypass. Restricted `open()` to working directory when filesystem access is enabled.
+- **Python sandbox hardening**: Replaced module blacklist approach with filesystem-function interception. The `os` module is kept available so network stdlib modules (`socket`, `urllib`, `http`) can function, but all `os` filesystem functions (`open`, `listdir`, `mkdir`, `remove`, `rename`, `stat`, `walk`, etc.) are blocked in sandbox mode. `subprocess` and `ctypes` remain blocked as a security baseline. When filesystem access is enabled, both `open()` and `os` filesystem functions are restricted to the working directory.
 - **HTTP SSRF protection**: Added IPv4-mapped IPv6 address blocking (`::ffff:127.0.0.1`), disabled automatic redirects, and configured connection timeouts and pool limits for the global HTTP client.
 - **Command execution safety**: Timeout now kills the child process via `Child::kill()` instead of just cancelling the wait. Added command length limit (10,000 characters). Added newline (`\n`, `\r`) injection detection and backslash escape handling in quote parsing.
 - **File operation hardening**: Rename operations now validate target paths with `ensure_path_within_working_dir`. Move operations fallback to copy+delete on cross-device errors. Removed TOCTOU race conditions by relying on kernel error handling instead of pre-flight `exists()` checks.

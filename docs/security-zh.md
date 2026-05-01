@@ -29,7 +29,7 @@ Rust MCP Server 实现了多层安全机制，在为 AI 助手提供强大功能
 │  └── 并发限制、超时、输出/文件大小限制                           │
 ├─────────────────────────────────────────────────────────────┤
 │  第7层：Python 沙箱                                           │
-│  └── 模块黑名单、阻塞 open()、路径限制                          │
+│  └── 文件系统函数拦截、阻塞 open()、路径限制                     │
 ├─────────────────────────────────────────────────────────────┤
 │  第8层：HTTP SSRF 防护                                        │
 │  └── 私有 IP 拦截、禁止重定向、连接限制                          │
@@ -214,8 +214,10 @@ RUST_LOG=debug ./rust-mcp-server
 
 **沙箱特性：**
 - 禁用文件系统访问时，`builtins.open` 和 `_io.open` / `_io.FileIO` 被替换为阻塞存根
-- 模块导入黑名单：`os`、`nt`、`posix`、`subprocess`、`socket`、`urllib`、`http.client`、`ctypes`、`platform`、`importlib`
-- 通过 WebUI 启用文件系统访问后，`open()` 被包装为仅限工作目录内路径
+- `os` 模块的文件系统函数（`listdir`、`mkdir`、`remove`、`rename`、`stat`、`walk` 等）在沙箱模式下被替换为阻塞存根
+- 网络标准库模块（`socket`、`urllib`、`http`、`ssl`）在沙箱模式下保持完全可用
+- `subprocess` 和 `ctypes` 作为安全基线被阻止
+- 通过 WebUI 启用文件系统访问后，`open()` 和 `os` 文件系统函数被包装为仅限工作目录内路径
 - 执行超时通过 `sys.settrace` 在 VM 内部注入自终止检查
 
 ### 10. HTTP SSRF 防护
@@ -250,7 +252,7 @@ RUST_LOG=debug ./rust-mcp-server
 - `env_get` - 环境变量读取（过滤敏感变量）
 - `git_ops` - Git 仓库只读操作（不受工作目录限制）
 - `process_list` - 系统进程列表
-- `execute_python` - Python 代码执行（默认沙箱模式；文件系统访问可通过 WebUI 切换）
+- `execute_python` - Python 代码执行。所有 Python 标准库模块均可使用。文件系统访问可通过 WebUI 切换。
 
 ### 危险工具（4个）
 这些工具默认禁用，需要谨慎使用：

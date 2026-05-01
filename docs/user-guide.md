@@ -324,19 +324,21 @@ Execute shell commands with security checks (dangerous).
 ```
 
 #### execute_python
-Execute Python code in a sandboxed environment. Useful for precise calculations, data processing, and logic evaluation. **Disabled by default** — enable via WebUI.
+Execute Python code for calculations, data processing, and logic evaluation. **All Python standard library modules are available.**
 
 **Sandbox Mode (Default):**
-- Filesystem access is disabled (`builtins.open`, `_io.open`, and `_io.FileIO` are blocked)
-- Blocked modules: `os`, `nt`, `posix`, `subprocess`, `socket`, `urllib`, `http.client`, `ctypes`, `platform`, `importlib`
-- Available stdlib modules: `math`, `random`, `statistics`, `datetime`, `itertools`, `functools`, `collections`, `re`, `string`, `json`, `fractions`, `decimal`, `typing`, `hashlib`, `base64`, `bisect`, `heapq`, `copy`, `pprint`, `enum`, `types`, `dataclasses`, `inspect`, `sys`
+- Filesystem operations are disabled (`builtins.open`, `_io.open`, `_io.FileIO`, and `os` filesystem functions are blocked)
+- Network modules (`socket`, `urllib`, `http`, `ssl`) and data processing modules remain fully functional
+- If a filesystem operation is attempted, the error message will indicate that the execution is in sandbox mode
+- `subprocess` and `ctypes` are blocked as a security baseline
 - Assign return value to `__result`; last non-comment line auto-evaluates if `__result` is not set
 - Execution timeout uses trace-based self-termination inside the VM
 
 **Filesystem Mode:**
 - Enable via WebUI "Filesystem" toggle on the `execute_python` card
 - When enabled, `__working_dir` is injected into globals
-- `open()` is wrapped to restrict paths to the configured working directory
+- `open()` and `os` filesystem functions are wrapped to restrict paths to the configured working directory
+- All Python standard library modules including network and filesystem modules are available
 
 **Parameters:**
 - `code` (string): Python code to execute (max 10,000 characters)
@@ -352,7 +354,7 @@ Execute Python code in a sandboxed environment. Useful for precise calculations,
 - Assign the desired return value to `__result`
 - If `__result` is not set, the last non-comment line is automatically evaluated as an expression
 - The global variable `__working_dir` contains the server working directory when filesystem access is enabled
-- Python standard library modules (math, random, statistics, datetime, etc.) are available
+- All Python standard library modules are available regardless of mode
 
 **Example:**
 ```json

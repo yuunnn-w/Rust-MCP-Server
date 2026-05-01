@@ -82,7 +82,7 @@ The following write operations are **restricted** to the working directory:
 | `http_request` | Make HTTP GET/POST requests | Disabled |
 | `git_ops` | Run git commands (status, diff, log, branch, show) | Enabled |
 | `env_get` | Get environment variable values | Enabled |
-| `execute_python` | Execute Python code in a sandboxed environment (filesystem access toggleable via WebUI) | Enabled |
+| `execute_python` | Execute Python code. All Python standard library modules are available. Filesystem access is toggleable via WebUI. | Enabled |
 
 #### Utility Tools
 | Tool | Description |

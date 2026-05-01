@@ -82,7 +82,7 @@ Rust MCP Server 是一个使用 Rust 构建的高性能 [模型上下文协议 (
 | `http_request` | 发起 HTTP GET/POST/PUT/DELETE/PATCH/HEAD 请求 | 禁用 |
 | `git_ops` | 运行 git 命令（status、diff、log、branch、show） | 启用 |
 | `env_get` | 获取环境变量值 | 启用 |
-| `execute_python` | 在沙箱环境中执行 Python 代码（文件系统访问可通过 WebUI 切换） | 启用 |
+| `execute_python` | 执行 Python 代码。所有 Python 标准库模块均可使用。文件系统访问可通过 WebUI 切换。 | 启用 |
 
 #### 实用工具
 | 工具 | 描述 |

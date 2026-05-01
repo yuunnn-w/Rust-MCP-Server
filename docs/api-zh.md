@@ -494,7 +494,7 @@ MCP 服务通过 HTTP 或 SSE 使用 JSON-RPC 2.0。
       },
       {
         "name": "execute_python",
-        "description": "在沙箱环境中执行 Python 代码（默认禁用文件系统访问；安全）。将返回值赋给 __result。可用模块：math, random, statistics, datetime, itertools, functools, collections, re, string, json, fractions, decimal, typing, hashlib, base64, bisect, heapq, copy, pprint, enum, types, dataclasses, inspect, sys。文件系统访问可通过 WebUI 切换。"},
+        "description": "执行 Python 代码，用于精确计算、数据处理和逻辑评估。将返回值赋给 __result。所有 Python 标准库模块均可使用。文件系统访问可通过 WebUI 切换。"},
         "inputSchema": {
           "type": "object",
           "properties": {

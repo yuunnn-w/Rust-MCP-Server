@@ -29,7 +29,7 @@ Rust MCP Server implements multiple layers of security to protect against malici
 │  └── Concurrency limits, timeouts, output/file size limits  │
 ├─────────────────────────────────────────────────────────────┤
 │  Layer 7: Python Sandbox                                    │
-│  └── Module blacklist, blocked open(), path restriction     │
+│  └── Filesystem function interception, blocked open(), path restriction │
 ├─────────────────────────────────────────────────────────────┤
 │  Layer 8: HTTP SSRF Protection                              │
 │  └── Private IP blocking, no redirects, connection limits   │
@@ -214,8 +214,10 @@ The `execute_python` tool runs user code in a RustPython interpreter with sandbo
 
 **Sandbox features:**
 - `builtins.open` and `_io.open` / `_io.FileIO` are replaced with blocked stubs when filesystem access is disabled
-- Module import blacklist: `os`, `nt`, `posix`, `subprocess`, `socket`, `urllib`, `http.client`, `ctypes`, `platform`, `importlib`
-- When filesystem access is enabled via WebUI, `open()` is wrapped to restrict paths to the working directory
+- `os` module filesystem functions (`listdir`, `mkdir`, `remove`, `rename`, `stat`, `walk`, etc.) are replaced with blocked stubs in sandbox mode
+- Network standard library modules (`socket`, `urllib`, `http`, `ssl`) remain fully functional in sandbox mode
+- `subprocess` and `ctypes` are blocked as a security baseline
+- When filesystem access is enabled via WebUI, `open()` and `os` filesystem functions are wrapped to restrict paths to the working directory
 - Execution timeout uses `sys.settrace` to inject a self-terminating check inside the VM
 
 ### 10. HTTP SSRF Protection
@@ -250,7 +252,7 @@ These tools are safe to enable by default. Read-only file tools are not restrict
 - `env_get` - Environment variable reading (sensitive variables filtered)
 - `git_ops` - Git repository read-only operations (no working directory restriction)
 - `process_list` - System process listing
-- `execute_python` - Python code execution (sandboxed by default; filesystem access toggleable via WebUI)
+- `execute_python` - Python code execution. All standard library modules are available. Filesystem access is toggleable via WebUI.
 
 ### Dangerous Tools (4)
 These tools require caution and are disabled by default:

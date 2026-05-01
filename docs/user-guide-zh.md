@@ -319,19 +319,21 @@ WebUI 提供 Cyberpunk AI Command Center 控制面板：
 ```
 
 #### execute_python
-在沙箱环境中执行 Python 代码。适用于精确计算、数据处理和逻辑评估。**默认禁用** —— 请通过 WebUI 启用。
+执行 Python 代码，用于精确计算、数据处理和逻辑评估。**所有 Python 标准库模块均可使用。**
 
 **沙箱模式（默认）：**
-- 文件系统访问被禁用（`builtins.open`、`_io.open` 和 `_io.FileIO` 被阻塞）
-- 被阻止的模块：`os`、`nt`、`posix`、`subprocess`、`socket`、`urllib`、`http.client`、`ctypes`、`platform`、`importlib`
-- 可用标准库模块：`math`、`random`、`statistics`、`datetime`、`itertools`、`functools`、`collections`、`re`、`string`、`json`、`fractions`、`decimal`、`typing`、`hashlib`、`base64`、`bisect`、`heapq`、`copy`、`pprint`、`enum`、`types`、`dataclasses`、`inspect`、`sys`
+- 文件系统操作被禁用（`builtins.open`、`_io.open`、`_io.FileIO` 以及 `os` 的文件系统函数被阻塞）
+- 网络模块（`socket`、`urllib`、`http`、`ssl`）和数据处理模块保持完全可用
+- 若尝试文件系统操作，错误信息将提示当前处于沙箱模式
+- `subprocess` 和 `ctypes` 作为安全基线被阻止
 - 将返回值赋给 `__result`；若未设置，最后一行非注释内容自动作为表达式求值
 - 执行超时通过 `sys.settrace` 在 VM 内部注入自终止检查
 
 **文件系统模式：**
 - 通过 WebUI 上 `execute_python` 卡片的"文件系统"开关启用
 - 启用后，`__working_dir` 被注入到全局变量中
-- `open()` 被包装为仅限配置的工作目录内路径
+- `open()` 和 `os` 文件系统函数被包装为仅限配置的工作目录内路径
+- 所有 Python 标准库模块（包括网络和文件系统模块）均可使用
 
 **参数：**
 - `code` (string): 要执行的 Python 代码（最大 10,000 字符）
@@ -347,7 +349,7 @@ WebUI 提供 Cyberpunk AI Command Center 控制面板：
 - 将返回值赋给变量 `__result`
 - 若未设置 `__result`，最后一行非注释内容将自动作为表达式求值
 - 启用文件系统访问时，全局变量 `__working_dir` 包含服务器工作目录
-- 支持 Python 标准库模块（math、random、statistics、datetime 等）
+- 无论处于何种模式，所有 Python 标准库模块均可用
 
 **示例：**
 ```json
