@@ -60,20 +60,24 @@ pub async fn json_query(
     let query = if params.query.starts_with('/') {
         params.query.clone()
     } else {
-        format!("/ {}", params.query)
+        format!("/{}", params.query)
     };
 
     let result = json_value.pointer(&query);
 
     let response = if let Some(value) = result {
         let result_str = serde_json::to_string_pretty(value).map_err(|e| e.to_string())?;
-        let truncated = result_str.len() > max_chars;
+        let truncated = result_str.chars().count() > max_chars;
         let result_text = if truncated {
+            let trunc_point = result_str.char_indices()
+                .nth(max_chars)
+                .map(|(i, _)| i)
+                .unwrap_or(result_str.len());
             format!(
                 "{}\n\n[... Result truncated at {} characters, total {} ...]",
-                &result_str[..max_chars],
+                &result_str[..trunc_point],
                 max_chars,
-                result_str.len()
+                result_str.chars().count()
             )
         } else {
             result_str

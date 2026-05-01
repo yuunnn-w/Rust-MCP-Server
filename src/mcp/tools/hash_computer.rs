@@ -3,9 +3,12 @@ use rmcp::handler::server::wrapper::Parameters;
 use rmcp::model::CallToolResult;
 use rmcp::schemars::JsonSchema;
 use serde::Deserialize;
+use md5::Md5;
 use sha1::Sha1;
-use sha2::{Digest, Sha256};
+use sha2::Sha256;
+use sha2::digest::Digest;
 use std::path::Path;
+use tokio::io::AsyncReadExt;
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct HashComputeParams {
@@ -40,8 +43,9 @@ pub async fn hash_compute(
 fn compute_hash(data: &[u8], algorithm: &str) -> Result<String, String> {
     match algorithm.to_lowercase().as_str() {
         "md5" => {
-            let hash = md5::compute(data);
-            Ok(format!("{:x}", hash))
+            let mut hasher = Md5::new();
+            hasher.update(data);
+            Ok(format!("{:x}", hasher.finalize()))
         }
         "sha1" => {
             let mut hasher = Sha1::new();
@@ -75,11 +79,44 @@ async fn compute_file_hash(
         return Err(format!("Path '{}' is not a file", file_path));
     }
 
-    let data = tokio::fs::read(&canonical_path)
+    // Stream file in chunks to avoid OOM with large files
+    let mut file = tokio::fs::File::open(&canonical_path)
         .await
-        .map_err(|e| format!("Failed to read file: {}", e))?;
+        .map_err(|e| format!("Failed to open file: {}", e))?;
 
-    compute_hash(&data, algorithm)
+    match algorithm.to_lowercase().as_str() {
+        "md5" => {
+            let mut hasher = Md5::new();
+            let mut buf = [0u8; 8192];
+            loop {
+                let n = file.read(&mut buf).await.map_err(|e| format!("Failed to read file: {}", e))?;
+                if n == 0 { break; }
+                hasher.update(&buf[..n]);
+            }
+            Ok(format!("{:x}", hasher.finalize()))
+        }
+        "sha1" => {
+            let mut hasher = Sha1::new();
+            let mut buf = [0u8; 8192];
+            loop {
+                let n = file.read(&mut buf).await.map_err(|e| format!("Failed to read file: {}", e))?;
+                if n == 0 { break; }
+                hasher.update(&buf[..n]);
+            }
+            Ok(format!("{:x}", hasher.finalize()))
+        }
+        "sha256" => {
+            let mut hasher = Sha256::new();
+            let mut buf = [0u8; 8192];
+            loop {
+                let n = file.read(&mut buf).await.map_err(|e| format!("Failed to read file: {}", e))?;
+                if n == 0 { break; }
+                hasher.update(&buf[..n]);
+            }
+            Ok(format!("{:x}", hasher.finalize()))
+        }
+        _ => Err(format!("Unsupported algorithm: {}", algorithm)),
+    }
 }
 
 #[cfg(test)]

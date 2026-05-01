@@ -435,20 +435,6 @@ impl ServerState {
         format!("{:x}", hasher.finish())
     }
 
-    /// Check if a command is pending confirmation
-    pub async fn is_command_pending(&self, command: &str, cwd: &str) -> bool {
-        let hash = self.hash_command(command, cwd);
-        let pending = self.pending_commands.read().await;
-        
-        if let Some(cmd) = pending.get(&hash) {
-            // Check if not expired (5 minutes timeout)
-            if cmd.timestamp.elapsed() < Duration::from_secs(300) {
-                return true;
-            }
-        }
-        false
-    }
-
     /// Add a command to pending list
     pub async fn add_pending_command(&self, command: &str, cwd: &str) {
         let hash = self.hash_command(command, cwd);
@@ -460,11 +446,18 @@ impl ServerState {
         });
     }
 
-    /// Remove a pending command (after execution)
-    pub async fn remove_pending_command(&self, command: &str, cwd: &str) {
+    /// Atomically check if a command is pending and remove it if so (for confirmation)
+    pub async fn confirm_and_remove_pending_command(&self, command: &str, cwd: &str) -> bool {
         let hash = self.hash_command(command, cwd);
         let mut pending = self.pending_commands.write().await;
-        pending.remove(&hash);
+        
+        if let Some(cmd) = pending.get(&hash) {
+            if cmd.timestamp.elapsed() < Duration::from_secs(300) {
+                pending.remove(&hash);
+                return true;
+            }
+        }
+        false
     }
 
     /// Clean up expired pending commands

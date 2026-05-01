@@ -5,6 +5,8 @@ use rmcp::schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 
+const MAX_FILE_SIZE: usize = 100 * 1024 * 1024; // 100MB max file size
+
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct FileWriteItem {
     /// File path to write
@@ -55,6 +57,21 @@ pub async fn file_write(
 }
 
 async fn write_single_file(item: FileWriteItem, working_dir: &Path) -> FileWriteResult {
+    // Check file size limit
+    if item.content.len() > MAX_FILE_SIZE {
+        return FileWriteResult {
+            path: item.path.clone(),
+            success: false,
+            error: Some(format!(
+                "Content size {} exceeds maximum allowed size of {} bytes",
+                item.content.len(),
+                MAX_FILE_SIZE
+            )),
+            message: None,
+            bytes_written: None,
+        };
+    }
+
     let path = Path::new(&item.path);
     let mode = item.mode.as_deref().unwrap_or("new");
 
@@ -143,7 +160,11 @@ async fn write_single_file(item: FileWriteItem, working_dir: &Path) -> FileWrite
                 }
             };
 
-            file.write_all(item.content.as_bytes()).await
+            let write_res = file.write_all(item.content.as_bytes()).await;
+            if write_res.is_ok() {
+                let _ = file.flush().await;
+            }
+            write_res
         }
         _ => unreachable!(),
     };

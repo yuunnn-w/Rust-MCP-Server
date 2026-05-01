@@ -5,7 +5,7 @@ use serde::Deserialize;
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct CalculatorParams {
-    /// Mathematical expression to evaluate (supports +, -, *, /, ^, sqrt, sin, cos, tan, log, ln, abs, pi, e)
+    /// Mathematical expression to evaluate (supports +, -, *, /, ^, sqrt, sin, cos, tan, log, ln, abs, min, max, floor, ceil, round, pi, e)
     #[schemars(description = "Mathematical expression to evaluate")]
     pub expression: String,
 }
@@ -62,6 +62,22 @@ fn tokenize(expr: &str) -> Result<Vec<Token>, String> {
                         chars.next();
                     } else {
                         break;
+                    }
+                }
+                // Handle scientific notation (e.g., 1e10, 1.5e-3)
+                if let Some(&'e' | &'E') = chars.peek() {
+                    num_str.push('e');
+                    chars.next();
+                    if let Some(&'+' | &'-') = chars.peek() {
+                        num_str.push(chars.next().unwrap());
+                    }
+                    while let Some(&c) = chars.peek() {
+                        if c.is_ascii_digit() {
+                            num_str.push(c);
+                            chars.next();
+                        } else {
+                            break;
+                        }
                     }
                 }
                 let num: f64 = num_str
@@ -121,7 +137,10 @@ fn tokenize(expr: &str) -> Result<Vec<Token>, String> {
 }
 
 fn parse_and_evaluate(tokens: &[Token]) -> Result<f64, String> {
-    let (result, _) = parse_expression(tokens, 0)?;
+    let (result, pos) = parse_expression(tokens, 0)?;
+    if pos != tokens.len() {
+        return Err(format!("Unexpected token at position {}: {:?}", pos, tokens[pos]));
+    }
     Ok(result)
 }
 
@@ -181,6 +200,12 @@ fn parse_power(tokens: &[Token], pos: usize) -> Result<(f64, usize), String> {
 
     if pos < tokens.len() && tokens[pos] == Token::Power {
         let (right, new_pos) = parse_power(tokens, pos + 1)?;
+        if left < 0.0 && right.fract() != 0.0 {
+            return Err(format!(
+                "Cannot raise negative number {} to fractional power {}",
+                left, right
+            ));
+        }
         Ok((left.powf(right), new_pos))
     } else {
         Ok((left, pos))
@@ -193,7 +218,7 @@ fn parse_unary(tokens: &[Token], pos: usize) -> Result<(f64, usize), String> {
     }
 
     match &tokens[pos] {
-        Token::Plus => parse_primary(tokens, pos + 1),
+        Token::Plus => parse_unary(tokens, pos + 1),
         Token::Minus => {
             let (val, new_pos) = parse_primary(tokens, pos + 1)?;
             Ok((-val, new_pos))

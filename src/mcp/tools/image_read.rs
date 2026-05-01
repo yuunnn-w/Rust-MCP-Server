@@ -57,6 +57,14 @@ pub async fn image_read(
 
     let size_bytes = std::fs::metadata(path).map(|m| m.len() as usize).unwrap_or(0);
 
+    const MAX_IMAGE_SIZE: usize = 50 * 1024 * 1024; // 50MB max
+    if size_bytes > MAX_IMAGE_SIZE {
+        return Err(format!(
+            "Image file '{}' is too large ({} bytes, max {} bytes). Use 'metadata' mode instead.",
+            params.path, size_bytes, MAX_IMAGE_SIZE
+        ));
+    }
+
     if mode == "metadata" {
         let meta = ImageMetadata {
             mime_type,

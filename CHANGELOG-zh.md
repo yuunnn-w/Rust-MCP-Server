@@ -8,10 +8,35 @@
 ## [Unreleased]
 
 ### 新增功能
-- 新增工具 `execute_python`：基于 RustPython 解释器执行 Python 代码，支持本地文件系统访问。具备 stdout/stderr 捕获、超时控制（1-30秒）、自动末行表达式求值、`__working_dir` 全局变量注入等特性。标记为危险工具，默认禁用。
+- 新增工具 `execute_python`：基于 RustPython 解释器执行 Python 代码，支持本地文件系统访问。具备 stdout/stderr 捕获、超时控制（1-30秒）、自动末行表达式求值、`__working_dir` 全局变量注入等特性。文件系统访问默认禁用（沙箱模式）；该工具本身是安全工具，默认启用。
 
 ### 安全
-- `execute_python` 因具备文件系统访问能力被归类为危险工具，请通过 WebUI 或 `--disable-tools` 配置谨慎启用。
+- `execute_python` 默认以沙箱模式运行（文件系统访问禁用）。该工具本身是安全工具，默认启用。如需开启文件系统访问，请通过 WebUI 谨慎启用。
+- **Python 沙箱加固**：扩展模块黑名单，新增 `subprocess`、`socket`、`urllib`、`http.client`、`ctypes`、`platform`、`importlib`。修复 `_io.open` 沙箱绕过漏洞。启用文件系统访问时，`open()` 被限制在工作目录内。
+- **HTTP SSRF 防护**：新增 IPv4 映射 IPv6 地址拦截（`::ffff:127.0.0.1`），禁用自动重定向，并为全局 HTTP 客户端配置连接超时和连接池限制。
+- **命令执行安全**：超时后通过 `Child::kill()` 终止子进程，而非仅取消等待。新增命令长度限制（10,000 字符）。注入检测新增换行符（`\n`、`\r`），并正确处理引号内的反斜杠转义。
+- **文件操作加固**：重命名操作通过 `ensure_path_within_working_dir` 校验目标路径。跨文件系统移动时自动回退到复制+删除。消除 TOCTOU 竞态条件，移除 copy/move/delete/rename 前的预检查，直接依赖操作系统错误返回。
+- **哈希流式计算**：大文件哈希改用 8KB 分块读取，避免一次性加载整个文件导致 OOM。
+- **文件大小限制**：`file_write` 新增 100MB 内容限制，`image_read` 新增 50MB 限制。
+- **敏感信息过滤**：`env_get` 对包含 `SECRET`、`PASSWORD`、`TOKEN`、`KEY` 的环境变量进行黑名单过滤。
+
+### 修复
+- **崩溃修复**：修复 `json_query`、`file_read`（highlight_line）、`http_request`、`execute_command` 中的 UTF-8 截断 panic，使用 `char_indices()` 安全边界检测。
+- **计算器正确性**：拒绝尾部多余 token（如 `(1+2))`），修复一元运算符链（`+-5`），对负数的非整数次幂返回错误而非 NaN。
+- **file_read offset_chars**：续读提示现在正确报告字符偏移量，不再混淆字节长度。
+- **file_search 性能**：每次搜索只编译一次正则表达式；`max_results` 在遍历过程中强制执行，避免读取不必要的文件。
+- **file_edit CRLF 处理**：行替换、插入、删除模式现在保留 Windows `\r\n` 换行符。
+- **损坏符号链接检测**：`file_stat` 和 `path_exists` 使用 `symlink_metadata()`，正确将损坏的符号链接报告为存在。
+- **git_ops 路径处理**：从 `GIT_WORK_TREE` 和 `GIT_DIR` 环境变量中去除 Windows UNC 前缀（`\\?\`），使 git 能正确识别仓库路径。
+- **Web API 错误码**：REST 端点现在返回正确的 HTTP 状态码 —— 工具不存在返回 404，配置参数无效返回 400，内部错误返回 500 —— 不再全部返回 500。
+- **Web 静态文件**：未知的 `/api/*` 路由现在返回正确的 404，不再回退到 SPA 的 `index.html`。
+
+### 变更
+- `md5` 依赖替换为 `md-5`（RustCrypto），支持流式哈希计算。
+- `datetime` 改为使用系统本地时区，不再硬编码中国/北京 UTC+8。
+- `system_info` 使用 `available_memory()` 替代 `free_memory()`，内存使用率更准确。
+- `process_list` 内存单位从 KB 修正为 MB。
+- `dir_list` 按 `size`/`modified` 排序时复用预缓存的元数据，避免重复 stat 系统调用。
 
 ## [0.2.0] - 2024-04-22
 

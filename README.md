@@ -82,13 +82,13 @@ The following write operations are **restricted** to the working directory:
 | `http_request` | Make HTTP GET/POST requests | Disabled |
 | `git_ops` | Run git commands (status, diff, log, branch, show) | Enabled |
 | `env_get` | Get environment variable values | Enabled |
-| `execute_python` | Execute Python code in a sandboxed environment (safe by default, filesystem access toggleable) | Enabled |
+| `execute_python` | Execute Python code in a sandboxed environment (filesystem access toggleable via WebUI) | Enabled |
 
 #### Utility Tools
 | Tool | Description |
 |------|-------------|
 | `calculator` | Calculate mathematical expressions |
-| `datetime` | Get current date/time (China timezone) |
+| `datetime` | Get current date/time (local timezone) |
 | `base64_codec` | Encode/decode base64 |
 | `hash_compute` | Compute MD5/SHA1/SHA256 hashes |
 
@@ -165,7 +165,7 @@ http://127.0.0.1:2233
 | `--mcp-port` | `MCP_PORT` | `3344` | MCP service port |
 | `--max-concurrency` | `MCP_MAX_CONCURRENCY` | `10` | Max concurrent calls |
 | `--working-dir` | `MCP_WORKING_DIR` | `.` | Working directory for file ops |
-| `--disable-tools` | `MCP_DISABLE_TOOLS` | See below | Tools to disable (15 tools disabled by default) |
+| `--disable-tools` | `MCP_DISABLE_TOOLS` | See below | Tools to disable (11 tools disabled by default) |
 | `--allow-dangerous-commands` | `MCP_ALLOW_DANGEROUS_COMMANDS` | - | Allow dangerous command IDs |
 | `--log-level` | `MCP_LOG_LEVEL` | `info` | Log level: trace/debug/info/warn/error |
 | `--disable-webui` | - | - | Disable WebUI panel |

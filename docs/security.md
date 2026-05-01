@@ -17,7 +17,7 @@ Rust MCP Server implements multiple layers of security to protect against malici
 │  └── Blocks rm, format, dd, fork bomb, etc.                 │
 ├─────────────────────────────────────────────────────────────┤
 │  Layer 3: Command Injection Detection                       │
-│  └── Detects ; | & ` $ ( ) < > characters                   │
+│  └── Detects ; | & ` $ ( ) < > \n \r characters             │
 ├─────────────────────────────────────────────────────────────┤
 │  Layer 4: Two-Step Confirmation                             │
 │  └── User must confirm dangerous operations                 │
@@ -26,7 +26,13 @@ Rust MCP Server implements multiple layers of security to protect against malici
 │  └── All commands logged with context                       │
 ├─────────────────────────────────────────────────────────────┤
 │  Layer 6: Resource Limits                                   │
-│  └── Concurrency limits, timeouts, output limits            │
+│  └── Concurrency limits, timeouts, output/file size limits  │
+├─────────────────────────────────────────────────────────────┤
+│  Layer 7: Python Sandbox                                    │
+│  └── Module blacklist, blocked open(), path restriction     │
+├─────────────────────────────────────────────────────────────┤
+│  Layer 8: HTTP SSRF Protection                              │
+│  └── Private IP blocking, no redirects, connection limits   │
 └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -101,12 +107,13 @@ Detects shell metacharacters that could be used for injection attacks.
 
 **Detected Characters:**
 ```
-;  |  &  `  $  (  )  <  >
+;  |  &  `  $  (  )  <  >  \n  \r
 ```
 
 **How it works:**
 - Analyzes command string before execution
 - Excludes characters inside quoted strings (both single and double quotes)
+- Handles backslash escapes inside quotes (e.g., `echo "hello\;world"`)
 - Requires confirmation for commands containing special characters
 - Second identical execution within 5 minutes proceeds
 
@@ -189,13 +196,39 @@ Prevents long-running commands from hanging.
 - **Default:** 30 seconds
 - **Maximum:** 300 seconds (5 minutes)
 - **Configuration:** Per-command timeout parameter
+- **Behavior:** Child process is killed on timeout, not just detached
 
-### 8. Output Limits
+### 8. Output & Content Size Limits
 
-Prevents memory exhaustion from large command outputs.
+Prevents memory exhaustion from large outputs or files.
 
-- **Limit:** 100KB per output (stdout + stderr)
-- **Behavior:** Truncated with notification
+- **Command output:** 100KB per output (stdout + stderr), UTF-8 safe truncation
+- **File write:** 100MB maximum content size
+- **Image read:** 50MB maximum file size (metadata-only mode for oversized images)
+- **Python code:** 10,000 characters maximum
+- **Shell command:** 10,000 characters maximum
+
+### 9. Python Sandbox
+
+The `execute_python` tool runs user code in a RustPython interpreter with sandboxing.
+
+**Sandbox features:**
+- `builtins.open` and `_io.open` / `_io.FileIO` are replaced with blocked stubs when filesystem access is disabled
+- Module import blacklist: `os`, `nt`, `posix`, `subprocess`, `socket`, `urllib`, `http.client`, `ctypes`, `platform`, `importlib`
+- When filesystem access is enabled via WebUI, `open()` is wrapped to restrict paths to the working directory
+- Execution timeout uses `sys.settrace` to inject a self-terminating check inside the VM
+
+### 10. HTTP SSRF Protection
+
+The `http_request` tool includes server-side request forgery protections.
+
+**Protections:**
+- Blocks private IP ranges: `127.0.0.0/8`, `10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`, `169.254.0.0/16`, `::1`, `::`, `fc00::/7`, `fe80::/10`
+- Blocks IPv4-mapped IPv6 addresses (`::ffff:127.0.0.1`)
+- Blocks `localhost` and `.localhost` domains
+- Disables automatic HTTP redirects
+- Connection timeout: 10 seconds; request timeout: 60 seconds
+- Maximum 10 idle connections per host
 
 ## Tool Classification
 
@@ -208,23 +241,23 @@ These tools are safe to enable by default. Read-only file tools are not restrict
 - `datetime` - Date/time
 - `base64_codec` - Base64 encoding/decoding
 - `hash_compute` - Hash calculation (no working directory restriction)
-- `http_request` - HTTP requests
+- `http_request` - HTTP requests (with SSRF protection)
 - `image_read` - Image reading (no working directory restriction)
 - `system_info` - System information
 - `file_stat` - File/directory metadata (no working directory restriction)
 - `path_exists` - Path existence check (no working directory restriction)
 - `json_query` - JSON file querying (no working directory restriction)
-- `env_get` - Environment variable reading
+- `env_get` - Environment variable reading (sensitive variables filtered)
 - `git_ops` - Git repository read-only operations (no working directory restriction)
 - `process_list` - System process listing
-- `execute_python` - Python code execution (sandboxed by default, filesystem access toggleable via WebUI)
+- `execute_python` - Python code execution (sandboxed by default; filesystem access toggleable via WebUI)
 
 ### Dangerous Tools (4)
-These tools require caution and are restricted to the working directory:
-- `file_write` - File writing (can overwrite data, restricted to working directory)
+These tools require caution and are disabled by default:
+- `file_write` - File writing (can overwrite data, restricted to working directory, 100MB limit)
 - `file_ops` - Copy, move, delete, or rename files (restricted to working directory)
 - `file_edit` - Multi-mode file editing (can modify files, restricted to working directory)
-- `execute_command` - Shell command execution
+- `execute_command` - Shell command execution (with injection detection and two-step confirmation)
 
 ## Best Practices
 

@@ -11,10 +11,12 @@ use std::path::Path;
 use std::process::Stdio;
 use std::sync::Arc;
 use tokio::process::Command;
+use tokio::sync::Mutex;
 use tokio::time::{timeout, Duration};
 use tracing::{info, warn};
 
 const MAX_OUTPUT_SIZE: usize = 100 * 1024; // 100KB output limit
+const MAX_COMMAND_LENGTH: usize = 10000; // 10000 character command limit
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct ExecuteCommandParams {
@@ -38,16 +40,22 @@ pub struct ExecuteCommandParams {
 /// Check for command injection patterns
 #[cfg(not(windows))]
 fn has_injection_patterns(command: &str) -> bool {
-    let dangerous_chars = [';', '|', '&', '`', '$', '(', ')', '<', '>'];
+    let dangerous_chars = [';', '|', '&', '`', '$', '(', ')', '<', '>', '\n', '\r'];
     let command_trimmed = command.trim();
 
     let mut in_single_quote = false;
     let mut in_double_quote = false;
+    let mut escape_next = false;
 
     for c in command_trimmed.chars() {
+        if escape_next {
+            escape_next = false;
+            continue;
+        }
         match c {
-            '\'' if !in_double_quote => in_single_quote = !in_single_quote,
-            '"' if !in_single_quote => in_double_quote = !in_double_quote,
+            '\\' if in_double_quote => escape_next = true,
+            '\'' if !in_double_quote && !escape_next => in_single_quote = !in_single_quote,
+            '"' if !in_single_quote && !escape_next => in_double_quote = !in_double_quote,
             _ if !in_single_quote && !in_double_quote && dangerous_chars.contains(&c) => return true,
             _ => {}
         }
@@ -59,14 +67,20 @@ fn has_injection_patterns(command: &str) -> bool {
 /// Check for command injection patterns (Windows variant)
 #[cfg(windows)]
 fn has_injection_patterns(command: &str) -> bool {
-    let dangerous_chars = [';', '|', '&', '`', '$', '(', ')', '<', '>', '%', '^'];
+    let dangerous_chars = [';', '|', '&', '`', '$', '(', ')', '<', '>', '%', '^', '\n', '\r'];
     let command_trimmed = command.trim();
 
     let mut in_double_quote = false;
+    let mut escape_next = false;
 
     for c in command_trimmed.chars() {
+        if escape_next {
+            escape_next = false;
+            continue;
+        }
         match c {
-            '"' => in_double_quote = !in_double_quote,
+            '\\' if in_double_quote => escape_next = true,
+            '"' if !escape_next => in_double_quote = !in_double_quote,
             _ if !in_double_quote && dangerous_chars.contains(&c) => return true,
             _ => {}
         }
@@ -75,12 +89,16 @@ fn has_injection_patterns(command: &str) -> bool {
     false
 }
 
-/// Truncate output if too large
+/// Truncate output if too large (UTF-8 safe)
 fn truncate_output(output: String) -> String {
     if output.len() > MAX_OUTPUT_SIZE {
+        let trunc_point = output.char_indices()
+            .nth(MAX_OUTPUT_SIZE)
+            .map(|(i, _)| i)
+            .unwrap_or(output.len());
         format!(
             "{}\n\n[... Output truncated, total size {} bytes, limit {} bytes ...]",
-            &output[..MAX_OUTPUT_SIZE],
+            &output[..trunc_point],
             output.len(),
             MAX_OUTPUT_SIZE
         )
@@ -120,6 +138,9 @@ pub async fn execute_command(
     let cwd = params.cwd.as_deref().unwrap_or(".");
     let cwd_path = Path::new(cwd);
     let command = params.command.trim();
+    if command.chars().count() > MAX_COMMAND_LENGTH {
+        return Err(format!("Command exceeds maximum length of {} characters", MAX_COMMAND_LENGTH));
+    }
     let shell = params.shell.as_deref();
 
     // Audit log
@@ -146,8 +167,7 @@ pub async fn execute_command(
     drop(config);
 
     if let Some(dangerous_id) = dangerous_check {
-        if state.is_command_pending(command, cwd).await {
-            state.remove_pending_command(command, cwd).await;
+        if state.confirm_and_remove_pending_command(command, cwd).await {
             warn!(
                 "[AUDIT] Dangerous command executed after confirmation: id={}, command={}",
                 dangerous_id, command
@@ -178,8 +198,7 @@ pub async fn execute_command(
 
     // Security check 3: check for injection patterns
     if has_injection_patterns(command) {
-        if state.is_command_pending(command, cwd).await {
-            state.remove_pending_command(command, cwd).await;
+        if state.confirm_and_remove_pending_command(command, cwd).await {
             warn!(
                 "[AUDIT] Command with injection patterns executed after confirmation: command={}",
                 command
@@ -221,19 +240,33 @@ pub async fn execute_command(
     cmd.stdout(Stdio::piped());
     cmd.stderr(Stdio::piped());
 
-    // Set environment variables
+    // Set environment variables (only string values allowed)
     if let Some(env_vars) = params.env {
         for (key, value) in env_vars {
             let value_str = value
                 .as_str()
                 .map(|s| s.to_string())
-                .unwrap_or_else(|| value.to_string());
+                .ok_or_else(|| format!("Environment variable '{}' must be a string value, got {}", key, value))?;
             cmd.env(key, value_str);
         }
     }
 
-    // Execute with timeout
-    let result = timeout(Duration::from_secs(timeout_secs), cmd.output()).await;
+    // Execute with timeout and explicit child process management
+    let child = cmd.spawn()
+        .map_err(|e| format!("Failed to spawn command: {}", e))?;
+
+    // Wrap child in Arc<Mutex<Option<>>> so we can kill it on timeout
+    // even if wait_with_output() has taken ownership
+    let child_arc = Arc::new(Mutex::new(Some(child)));
+    let child_clone = Arc::clone(&child_arc);
+
+    let output_fut = async move {
+        let mut guard = child_clone.lock().await;
+        let child = guard.take().unwrap();
+        child.wait_with_output().await
+    };
+
+    let result = timeout(Duration::from_secs(timeout_secs), output_fut).await;
 
     match result {
         Ok(Ok(output)) => {
@@ -277,6 +310,11 @@ pub async fn execute_command(
             Err(format!("Failed to execute command: {}", e))
         }
         Err(_) => {
+            // Kill the child process on timeout to prevent resource leak
+            let mut guard = child_arc.lock().await;
+            if let Some(mut child) = guard.take() {
+                let _ = child.kill().await;
+            }
             warn!(
                 "[AUDIT] Command timed out: timeout={}, cwd={}, command={}",
                 timeout_secs, cwd, command

@@ -147,22 +147,33 @@ async fn read_single_file(item: FileReadItem, working_dir: &Path) -> FileReadRes
             };
 
             let total_chars = file_content.chars().count();
-            let chars: Vec<char> = file_content.chars().collect();
-            let offset = offset.min(chars.len());
-            let slice: String = chars[offset..].iter().collect();
+            // Avoid collecting all chars into a Vec to reduce memory usage for large files
+            let offset = offset.min(total_chars);
+            let slice: String = file_content.chars().skip(offset).collect();
 
             let lines: Vec<&str> = slice.lines().collect();
             let total_lines = file_content.lines().count();
 
-            let prefix: String = chars[..offset].iter().collect();
+            let prefix: String = file_content.chars().take(offset).collect();
             let computed_start_line = prefix.lines().count().saturating_sub(1);
 
             let mut result = String::new();
             let mut chars_count = 0;
             let mut lines_included = 0;
             let mut truncated = false;
+            let mut slice_byte_pos = 0;
 
             for (idx, line) in lines.iter().enumerate() {
+                if idx > 0 {
+                    // Account for newline separator in slice byte tracking
+                    if slice.as_bytes().get(slice_byte_pos) == Some(&b'\r') {
+                        slice_byte_pos += 1;
+                    }
+                    if slice.as_bytes().get(slice_byte_pos) == Some(&b'\n') {
+                        slice_byte_pos += 1;
+                    }
+                }
+
                 let line_num = computed_start_line + idx;
                 let is_highlight = highlight_line.map(|hl| hl == line_num + 1).unwrap_or(false);
                 let formatted = if line_numbers {
@@ -186,21 +197,36 @@ async fn read_single_file(item: FileReadItem, working_dir: &Path) -> FileReadRes
                 chars_count += formatted.len();
                 result.push_str(&formatted);
                 lines_included += 1;
+                slice_byte_pos += line.len();
             }
             if result.ends_with('\n') {
                 result.pop();
             }
 
+            let mut file_chars_read = slice[..slice_byte_pos].chars().count();
+            // If truncated mid-stream, skip past the newline separator so the next
+            // continuation hint doesn't point to the middle of a line ending.
+            if truncated && lines_included < lines.len() {
+                if slice.as_bytes().get(slice_byte_pos) == Some(&b'\r') {
+                    file_chars_read += 1;
+                }
+                if slice.as_bytes().get(slice_byte_pos) == Some(&b'\n')
+                    || slice.as_bytes().get(slice_byte_pos.wrapping_add(1)) == Some(&b'\n')
+                {
+                    file_chars_read += 1;
+                }
+            }
+
             let mut response = result.clone();
             if truncated {
-                let next_start = offset + result.len();
+                let next_start = offset + file_chars_read;
                 response.push_str(&format!(
                     "\n\n[... Content truncated at {} characters. To continue, use start_line={} or offset_chars={} ...]",
                     max_chars, next_start, next_start
                 ));
             }
 
-            let has_more = offset + result.len() < total_chars;
+            let has_more = offset + file_chars_read < total_chars;
             let is_partial = lines_included < total_lines;
 
             if is_partial || has_more {
@@ -209,7 +235,7 @@ async fn read_single_file(item: FileReadItem, working_dir: &Path) -> FileReadRes
                     total_lines, lines_included
                 ));
                 if has_more {
-                    let hint_start = offset + result.len();
+                    let hint_start = offset + file_chars_read;
                     let hint_end = hint_start + 500;
                     response.push_str(&format!(
                         ", hint: start_line={} end_line={} or offset_chars={}]",
@@ -256,8 +282,13 @@ async fn read_single_file(item: FileReadItem, working_dir: &Path) -> FileReadRes
                         if idx == hl_0based {
                             if line_numbers {
                                 // Replace "NNNN | " prefix with ">>>NNNN | "
-                                if line.len() >= 7 && &line[4..7] == " | " {
+                                // Use safe slicing to avoid panic on multi-byte UTF-8 chars
+                                let prefix_match = line.chars().take(4).collect::<String>() == "   0"
+                                    || line.chars().take(4).collect::<String>().trim_start_matches(' ').len() <= 4;
+                                if prefix_match && line.get(4..7) == Some(" | ") {
                                     new_lines.push(format!(">>>{}", line));
+                                } else if line.starts_with(">>>") {
+                                    new_lines.push(line.to_string());
                                 } else {
                                     new_lines.push(format!(">>> {}", line));
                                 }

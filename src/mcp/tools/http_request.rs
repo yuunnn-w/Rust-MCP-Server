@@ -64,8 +64,6 @@ fn validate_url(url_str: &str) -> Result<(), String> {
                 || domain_lower.ends_with(".localhost")
                 || domain_lower == "127.0.0.1"
                 || domain_lower == "0.0.0.0"
-                || domain_lower == "::1"
-                || domain_lower == "[::1]"
             {
                 return Err(format!(
                     "Access to internal host '{}' is not allowed.",
@@ -107,6 +105,16 @@ fn is_private_ip(ip: IpAddr) -> bool {
         }
         IpAddr::V6(ipv6) => {
             let segments = ipv6.segments();
+            // Check for IPv4-mapped IPv6 addresses (::ffff:0:0/96)
+            if segments[0..5] == [0, 0, 0, 0, 0] && segments[5] == 0xffff {
+                let mapped_ipv4 = u32::from_be_bytes([
+                    (segments[6] >> 8) as u8,
+                    (segments[6] & 0xff) as u8,
+                    (segments[7] >> 8) as u8,
+                    (segments[7] & 0xff) as u8,
+                ]);
+                return is_private_ip(IpAddr::V4(std::net::Ipv4Addr::from(mapped_ipv4)));
+            }
             segments == [0, 0, 0, 0, 0, 0, 0, 1]
                 || segments == [0, 0, 0, 0, 0, 0, 0, 0]
                 || (segments[0] & 0xfe00) == 0xfc00
@@ -117,12 +125,24 @@ fn is_private_ip(ip: IpAddr) -> bool {
 
 static HTTP_CLIENT: std::sync::OnceLock<reqwest::Client> = std::sync::OnceLock::new();
 
-fn get_http_client() -> &'static reqwest::Client {
-    HTTP_CLIENT.get_or_init(|| {
-        reqwest::Client::builder()
-            .build()
-            .expect("Failed to build HTTP client")
-    })
+fn get_http_client() -> Result<&'static reqwest::Client, String> {
+    if let Some(client) = HTTP_CLIENT.get() {
+        return Ok(client);
+    }
+
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(60))
+        .connect_timeout(std::time::Duration::from_secs(10))
+        .pool_max_idle_per_host(10)
+        .pool_idle_timeout(std::time::Duration::from_secs(30))
+        .redirect(reqwest::redirect::Policy::none()) // Disable automatic redirects to prevent SSRF
+        .build()
+        .map_err(|e| format!("Failed to build HTTP client: {}", e))?;
+
+    match HTTP_CLIENT.set(client) {
+        Ok(()) => Ok(HTTP_CLIENT.get().unwrap()),
+        Err(_) => Ok(HTTP_CLIENT.get().unwrap()), // Another thread already initialized it
+    }
 }
 
 /// Extract value from JSON using JSON Pointer (RFC 6901)
@@ -131,13 +151,18 @@ fn extract_json_pointer(value: &serde_json::Value, pointer: &str) -> Option<serd
 }
 
 fn truncate_body(body: &str, limit: usize) -> String {
-    if body.len() <= limit {
+    let char_count = body.chars().count();
+    if char_count <= limit {
         body.to_string()
     } else {
+        let trunc_point = body.char_indices()
+            .nth(limit)
+            .map(|(i, _)| i)
+            .unwrap_or(body.len());
         format!(
             "{}\n\n[... Response truncated: {} / {} characters ...]",
-            &body[..limit],
-            body.len(),
+            &body[..trunc_point],
+            char_count,
             limit
         )
     }
@@ -152,7 +177,7 @@ pub async fn http_request(params: Parameters<HttpRequestParams>) -> Result<CallT
 
     validate_url(&params.url)?;
 
-    let client = get_http_client();
+    let client = get_http_client()?;
 
     let mut request_builder = match method.as_str() {
         "GET" => client.get(&params.url),
@@ -169,7 +194,8 @@ pub async fn http_request(params: Parameters<HttpRequestParams>) -> Result<CallT
     if let Some(headers) = params.headers {
         if let Some(obj) = headers.as_object() {
             for (key, value) in obj {
-                let value_str: String = value.as_str().map(|s| s.to_string()).unwrap_or_else(|| value.to_string());
+                let value_str = value.as_str()
+                    .ok_or_else(|| format!("Header '{}' value must be a string, got {}", key, value))?;
                 request_builder = request_builder.header(key, value_str);
             }
         }

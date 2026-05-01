@@ -52,7 +52,7 @@ base64 = "0.22"
 # Cryptography
 sha1 = "0.10"
 sha2 = "0.10"
-md5 = "0.7"
+md-5 = "0.10"
 
 # System info
 sysinfo = "0.33"

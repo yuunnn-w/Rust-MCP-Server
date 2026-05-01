@@ -1,5 +1,6 @@
 use rmcp::model::CallToolResult;
 use serde::Serialize;
+use std::cmp::Ordering;
 use sysinfo::{ProcessRefreshKind, RefreshKind, System, ProcessesToUpdate};
 
 #[derive(Debug, Serialize)]
@@ -27,13 +28,13 @@ pub async fn process_list() -> Result<CallToolResult, String> {
             pid: pid.as_u32(),
             name: process.name().to_string_lossy().to_string(),
             cpu_usage: process.cpu_usage(),
-            memory_mb: process.memory() / 1024,
+            memory_mb: process.memory() / (1024 * 1024),
             status: format!("{:?}", process.status()),
         })
         .collect();
 
-    // Sort by CPU usage descending
-    processes.sort_by(|a, b| b.cpu_usage.partial_cmp(&a.cpu_usage).unwrap());
+    // Sort by CPU usage descending (safely handle NaN)
+    processes.sort_by(|a, b| b.cpu_usage.partial_cmp(&a.cpu_usage).unwrap_or(Ordering::Equal));
 
     // Take top 50 processes
     let top_processes: Vec<_> = processes.into_iter().take(50).collect();

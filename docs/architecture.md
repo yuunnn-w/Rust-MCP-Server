@@ -238,10 +238,10 @@ Output Truncation (100KB limit)
 **Default Disabled Tools:**
 ```
 file_write,file_ops,file_edit,http_request,datetime,
-execute_command,process_list,base64_codec,hash_compute,system_info
+execute_command,process_list,base64_codec,hash_compute,system_info,execute_python
 ```
 
-The following 11 tools are enabled by default: `calculator`, `dir_list`, `file_read`, `file_search`, `image_read`, `file_stat`, `path_exists`, `json_query`, `git_ops`, `env_get`, `execute_python`.
+The following 11 tools are enabled by default: `calculator`, `dir_list`, `file_read`, `file_search`, `image_read`, `file_stat`, `path_exists`, `json_query`, `git_ops`, `env_get`, `execute_python`. Dangerous tools (`execute_command`, `file_write`, `file_ops`, `file_edit`) are disabled by default.
 
 ## Technology Stack
 

@@ -78,7 +78,7 @@ WebUI 提供了一个现代化的控制面板来管理 MCP 服务器。
 
 ### 工具注册表
 
-20 个内置工具，按类别组织：
+21 个内置工具，按类别组织：
 
 #### 文件操作类（8 个工具）
 | 工具名 | 描述 | 危险操作 | 工作目录限制 |
@@ -99,12 +99,13 @@ WebUI 提供了一个现代化的控制面板来管理 MCP 服务器。
 | `git_ops` | 在仓库中运行 git 命令 | 否 | 否 |
 | `env_get` | 获取环境变量的值 | 否 | 否 |
 
-#### 系统工具类（3 个工具）
+#### 系统工具类（4 个工具）
 | 工具名 | 描述 | 危险操作 | 工作目录限制 |
 |--------|------|----------|-------------|
 | `process_list` | 列出系统进程 | 否 | 否 |
 | `system_info` | 获取系统信息 | 否 | 否 |
 | `execute_command` | 在指定目录执行 shell 命令 | 是 | 是 |
+| `execute_python` | 在沙箱环境中执行 Python 代码（文件系统访问可通过 WebUI 切换） | 否 | 是（仅在启用文件系统访问时） |
 
 #### 实用工具类（4 个工具）
 | 工具名 | 描述 | 危险操作 | 工作目录限制 |
@@ -230,10 +231,10 @@ WebUI 提供了一个现代化的控制面板来管理 MCP 服务器。
 **默认禁用的工具：**
 ```
 file_write,file_ops,file_edit,http_request,datetime,
-execute_command,process_list,base64_codec,hash_compute,system_info
+execute_command,process_list,base64_codec,hash_compute,system_info,execute_python
 ```
 
-以下 10 个工具默认启用：`calculator`、`dir_list`、`file_read`、`file_search`、`image_read`、`file_stat`、`path_exists`、`json_query`、`git_ops`、`env_get`。
+以下 11 个工具默认启用：`calculator`、`dir_list`、`file_read`、`file_search`、`image_read`、`file_stat`、`path_exists`、`json_query`、`git_ops`、`env_get`、`execute_python`。危险工具（`execute_command`、`file_write`、`file_ops`、`file_edit`）默认禁用。
 
 ## 技术栈
 

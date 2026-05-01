@@ -304,14 +304,22 @@ async fn string_replace_mode(
         return Err("old_string cannot be empty".to_string());
     }
 
-    // Find all occurrences with line numbers
+    // Find all occurrences with line numbers (optimized: incremental line counting)
     let mut occurrences: Vec<usize> = Vec::new();
     let mut search_start = 0;
+    let mut current_line = 1;
+    let mut last_pos = 0;
     while let Some(pos) = content[search_start..].find(old) {
         let absolute_pos = search_start + pos;
-        let line_num = content[..absolute_pos].lines().count() + 1;
-        occurrences.push(line_num);
+        // Incrementally count newlines between last_pos and absolute_pos
+        for ch in content[last_pos..absolute_pos].chars() {
+            if ch == '\n' {
+                current_line += 1;
+            }
+        }
+        occurrences.push(current_line);
         search_start = absolute_pos + old.len();
+        last_pos = absolute_pos;
         if search_start >= content.len() {
             break;
         }
@@ -432,7 +440,9 @@ async fn line_replace_mode(
     result_lines.extend_from_slice(&lines[end_idx..]);
 
     let replaced_content = result_lines.join("\n");
-    let replaced_content = if content.ends_with('\n') && !replaced_content.is_empty() {
+    let replaced_content = if content.ends_with("\r\n") && !replaced_content.is_empty() {
+        replaced_content + "\r\n"
+    } else if content.ends_with('\n') && !replaced_content.is_empty() {
         replaced_content + "\n"
     } else {
         replaced_content
@@ -500,7 +510,9 @@ async fn insert_mode(
     result_lines.extend_from_slice(&lines[insert_idx..]);
 
     let replaced_content = result_lines.join("\n");
-    let replaced_content = if content.ends_with('\n') && !replaced_content.is_empty() {
+    let replaced_content = if content.ends_with("\r\n") && !replaced_content.is_empty() {
+        replaced_content + "\r\n"
+    } else if content.ends_with('\n') && !replaced_content.is_empty() {
         replaced_content + "\n"
     } else {
         replaced_content
@@ -569,7 +581,9 @@ async fn delete_mode(
     result_lines.extend_from_slice(&lines[end_idx..]);
 
     let replaced_content = result_lines.join("\n");
-    let replaced_content = if content.ends_with('\n') && !replaced_content.is_empty() {
+    let replaced_content = if content.ends_with("\r\n") && !replaced_content.is_empty() {
+        replaced_content + "\r\n"
+    } else if content.ends_with('\n') && !replaced_content.is_empty() {
         replaced_content + "\n"
     } else {
         replaced_content

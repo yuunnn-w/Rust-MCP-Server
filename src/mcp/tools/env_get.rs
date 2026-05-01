@@ -22,12 +22,24 @@ pub async fn env_get(params: Parameters<EnvGetParams>) -> Result<CallToolResult,
     let params = params.0;
     let name = params.name;
 
-    let value = std::env::var(&name).unwrap_or_default();
-    let is_set = std::env::var(&name).is_ok();
+    // Sensitive environment variable blacklist
+    let sensitive_patterns = ["SECRET", "PASSWORD", "TOKEN", "KEY", "CREDENTIAL", "AUTH"];
+    let upper_name = name.to_uppercase();
+    for pattern in &sensitive_patterns {
+        if upper_name.contains(pattern) {
+            return Err(format!(
+                "Access to environment variable '{}' is restricted for security reasons.",
+                name
+            ));
+        }
+    }
+
+    let env_result = std::env::var(&name);
+    let is_set = env_result.is_ok();
 
     let result = EnvGetResult {
         name: name.clone(),
-        value: if is_set { value } else { format!("Environment variable '{}' is not set", name) },
+        value: if is_set { env_result.unwrap() } else { format!("Environment variable '{}' is not set", name) },
         is_set: Some(is_set),
     };
 

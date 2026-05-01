@@ -1,4 +1,4 @@
-use crate::utils::file_utils::resolve_path;
+use crate::utils::file_utils::{resolve_path, strip_unc_prefix};
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::model::CallToolResult;
 use rmcp::schemars::JsonSchema;
@@ -6,6 +6,9 @@ use serde::Deserialize;
 use std::path::Path;
 use std::process::Stdio;
 use tokio::process::Command;
+use tokio::time::{timeout, Duration};
+
+const MAX_OUTPUT_SIZE: usize = 100 * 1024; // 100KB output limit
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct GitOpsParams {
@@ -66,14 +69,45 @@ pub async fn git_ops(
         }
     }
 
-    // Add user options
+    // Add user options (with security filtering)
     if let Some(options) = params.options {
         for opt in options {
+            // Reject options that could be used for command injection or path traversal
+            if opt.contains('=') {
+                return Err(format!(
+                    "Git option '{}' contains '=' which is not allowed for security reasons.",
+                    opt
+                ));
+            }
+            if opt.contains("../") || opt.contains("..\\") || (opt.starts_with('/') && opt.len() > 1) {
+                return Err(format!(
+                    "Git option '{}' contains path traversal which is not allowed.",
+                    opt
+                ));
+            }
+            if opt.contains(':') && action == "show" {
+                return Err(format!(
+                    "Git option '{}' contains ':' which is not allowed in show action for security reasons.",
+                    opt
+                ));
+            }
             cmd.arg(opt);
         }
     }
 
-    let output = cmd.output().await.map_err(|e| {
+    // Set GIT_WORK_TREE to restrict git to the repo directory
+    // Strip UNC prefix so git recognizes the path on Windows
+    let repo_str = strip_unc_prefix(&canonical_repo.to_string_lossy());
+    cmd.env("GIT_WORK_TREE", &repo_str);
+    cmd.env("GIT_DIR", format!(r"{}\.git", repo_str));
+
+    let output = timeout(
+        Duration::from_secs(30),
+        cmd.output()
+    )
+    .await
+    .map_err(|_| "Git command timed out after 30 seconds".to_string())?
+    .map_err(|e| {
         format!(
             "Failed to execute git command: {}. Make sure git is installed.",
             e
@@ -83,20 +117,30 @@ pub async fn git_ops(
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
 
-    if !output.status.success() && stdout.is_empty() {
-        return Err(format!(
-            "Git command failed: {}",
-            if stderr.is_empty() {
-                "unknown error".to_string()
-            } else {
-                stderr.to_string()
-            }
-        ));
+    if !output.status.success() {
+        let mut err_msg = format!("Git command failed with exit code: {:?}", output.status.code());
+        if !stderr.is_empty() {
+            err_msg.push_str(&format!("\n{}", stderr));
+        }
+        if !stdout.is_empty() {
+            err_msg.push_str(&format!("\n[stdout]\n{}", &stdout[..stdout.len().min(2000)]));
+        }
+        return Err(err_msg);
     }
 
     let mut response = String::new();
     if !stdout.is_empty() {
-        response.push_str(&stdout);
+        let truncated = if stdout.len() > MAX_OUTPUT_SIZE {
+            format!(
+                "{}\n\n[... Output truncated, total size {} bytes, limit {} bytes ...]",
+                &stdout[..MAX_OUTPUT_SIZE],
+                stdout.len(),
+                MAX_OUTPUT_SIZE
+            )
+        } else {
+            stdout.to_string()
+        };
+        response.push_str(&truncated);
     }
     if !stderr.is_empty() {
         if !response.is_empty() {

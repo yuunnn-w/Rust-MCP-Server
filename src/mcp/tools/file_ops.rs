@@ -103,24 +103,6 @@ async fn process_single_op(op: FileOpsOperation, working_dir: &Path) -> FileOpsR
                 }
             };
 
-            if !source_path.exists() {
-                return FileOpsResult {
-                    action: action,
-                    source: strip_unc_prefix(&source_path.to_string_lossy()),
-                    success: false,
-                    error: Some(format!("Source file '{}' does not exist", source)),
-                    message: None,
-                };
-            }
-            if !source_path.is_file() {
-                return FileOpsResult {
-                    action: action,
-                    source: strip_unc_prefix(&source_path.to_string_lossy()),
-                    success: false,
-                    error: Some(format!("Source path '{}' is not a file", source)),
-                    message: None,
-                };
-            }
             if target_path.exists() && !overwrite {
                 return FileOpsResult {
                     action: action,
@@ -155,6 +137,13 @@ async fn process_single_op(op: FileOpsOperation, working_dir: &Path) -> FileOpsR
                         strip_unc_prefix(&source_path.to_string_lossy()),
                         strip_unc_prefix(&target_path.to_string_lossy())
                     )),
+                },
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => FileOpsResult {
+                    action: action,
+                    source: strip_unc_prefix(&source_path.to_string_lossy()),
+                    success: false,
+                    error: Some(format!("Source file '{}' does not exist", source)),
+                    message: None,
                 },
                 Err(e) => FileOpsResult {
                     action: action,
@@ -191,24 +180,6 @@ async fn process_single_op(op: FileOpsOperation, working_dir: &Path) -> FileOpsR
                 }
             };
 
-            if !source_path.exists() {
-                return FileOpsResult {
-                    action: action,
-                    source: strip_unc_prefix(&source_path.to_string_lossy()),
-                    success: false,
-                    error: Some(format!("Source file '{}' does not exist", source)),
-                    message: None,
-                };
-            }
-            if !source_path.is_file() {
-                return FileOpsResult {
-                    action: action,
-                    source: strip_unc_prefix(&source_path.to_string_lossy()),
-                    success: false,
-                    error: Some(format!("Source path '{}' is not a file", source)),
-                    message: None,
-                };
-            }
             if target_path.exists() && !overwrite {
                 return FileOpsResult {
                     action: action,
@@ -232,7 +203,9 @@ async fn process_single_op(op: FileOpsOperation, working_dir: &Path) -> FileOpsR
                     };
                 }
             }
-            match tokio::fs::rename(&source_path, &target_path).await {
+            // Try atomic rename first, fallback to copy+delete for cross-filesystem moves
+            let rename_result = tokio::fs::rename(&source_path, &target_path).await;
+            match rename_result {
                 Ok(_) => FileOpsResult {
                     action: action,
                     source: strip_unc_prefix(&source_path.to_string_lossy()),
@@ -244,34 +217,60 @@ async fn process_single_op(op: FileOpsOperation, working_dir: &Path) -> FileOpsR
                         strip_unc_prefix(&target_path.to_string_lossy())
                     )),
                 },
-                Err(e) => FileOpsResult {
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => FileOpsResult {
                     action: action,
                     source: strip_unc_prefix(&source_path.to_string_lossy()),
                     success: false,
-                    error: Some(format!("Failed to move file: {}", e)),
+                    error: Some(format!("Source file '{}' does not exist", source)),
                     message: None,
                 },
+                Err(e) => {
+                    // Fallback: copy + delete for cross-filesystem moves
+                    match tokio::fs::copy(&source_path, &target_path).await {
+                        Ok(_) => {
+                            match tokio::fs::remove_file(&source_path).await {
+                                Ok(_) => FileOpsResult {
+                                    action: action,
+                                    source: strip_unc_prefix(&source_path.to_string_lossy()),
+                                    success: true,
+                                    error: None,
+                                    message: Some(format!(
+                                        "File '{}' moved to '{}' successfully (cross-filesystem).",
+                                        strip_unc_prefix(&source_path.to_string_lossy()),
+                                        strip_unc_prefix(&target_path.to_string_lossy())
+                                    )),
+                                },
+                                Err(remove_err) => FileOpsResult {
+                                    action: action,
+                                    source: strip_unc_prefix(&source_path.to_string_lossy()),
+                                    success: false,
+                                    error: Some(format!(
+                                        "Copied to target but failed to remove source: {}",
+                                        remove_err
+                                    )),
+                                    message: None,
+                                },
+                            }
+                        }
+                        Err(copy_err) if copy_err.kind() == std::io::ErrorKind::NotFound => FileOpsResult {
+                            action: action,
+                            source: strip_unc_prefix(&source_path.to_string_lossy()),
+                            success: false,
+                            error: Some(format!("Source file '{}' does not exist", source)),
+                            message: None,
+                        },
+                        Err(copy_err) => FileOpsResult {
+                            action: action,
+                            source: strip_unc_prefix(&source_path.to_string_lossy()),
+                            success: false,
+                            error: Some(format!("Failed to move file: {} (rename failed: {})", copy_err, e)),
+                            message: None,
+                        },
+                    }
+                }
             }
         }
         "delete" => {
-            if !source_path.exists() {
-                return FileOpsResult {
-                    action: action,
-                    source: strip_unc_prefix(&source_path.to_string_lossy()),
-                    success: false,
-                    error: Some(format!("File '{}' does not exist", source)),
-                    message: None,
-                };
-            }
-            if !source_path.is_file() {
-                return FileOpsResult {
-                    action: action,
-                    source: strip_unc_prefix(&source_path.to_string_lossy()),
-                    success: false,
-                    error: Some(format!("Path '{}' is not a file", source)),
-                    message: None,
-                };
-            }
             match tokio::fs::remove_file(&source_path).await {
                 Ok(_) => {
                     let parent = source_path.parent();
@@ -292,6 +291,13 @@ async fn process_single_op(op: FileOpsOperation, working_dir: &Path) -> FileOpsR
                         )),
                     }
                 }
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => FileOpsResult {
+                    action: action,
+                    source: strip_unc_prefix(&source_path.to_string_lossy()),
+                    success: false,
+                    error: Some(format!("File '{}' does not exist", source)),
+                    message: None,
+                },
                 Err(e) => FileOpsResult {
                     action: action,
                     source: strip_unc_prefix(&source_path.to_string_lossy()),
@@ -315,25 +321,6 @@ async fn process_single_op(op: FileOpsOperation, working_dir: &Path) -> FileOpsR
                 }
             };
 
-            if !source_path.exists() {
-                return FileOpsResult {
-                    action: action,
-                    source: strip_unc_prefix(&source_path.to_string_lossy()),
-                    success: false,
-                    error: Some(format!("File '{}' does not exist", source)),
-                    message: None,
-                };
-            }
-            if !source_path.is_file() {
-                return FileOpsResult {
-                    action: action,
-                    source: strip_unc_prefix(&source_path.to_string_lossy()),
-                    success: false,
-                    error: Some(format!("Path '{}' is not a file", source)),
-                    message: None,
-                };
-            }
-
             let parent = match source_path.parent() {
                 Some(p) => p,
                 None => {
@@ -347,6 +334,19 @@ async fn process_single_op(op: FileOpsOperation, working_dir: &Path) -> FileOpsR
                 }
             };
             let new_path = parent.join(new_name);
+            // Security check: ensure rename target stays within working directory
+            let new_path = match ensure_path_within_working_dir(&new_path, working_dir) {
+                Ok(p) => p,
+                Err(e) => {
+                    return FileOpsResult {
+                        action: action,
+                        source: strip_unc_prefix(&source_path.to_string_lossy()),
+                        success: false,
+                        error: Some(e),
+                        message: None,
+                    }
+                }
+            };
 
             if new_path.exists() {
                 return FileOpsResult {
@@ -372,6 +372,13 @@ async fn process_single_op(op: FileOpsOperation, working_dir: &Path) -> FileOpsR
                         strip_unc_prefix(&source_path.to_string_lossy()),
                         strip_unc_prefix(&new_path.to_string_lossy())
                     )),
+                },
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => FileOpsResult {
+                    action: action,
+                    source: strip_unc_prefix(&source_path.to_string_lossy()),
+                    success: false,
+                    error: Some(format!("File '{}' does not exist", source)),
+                    message: None,
                 },
                 Err(e) => FileOpsResult {
                     action: action,

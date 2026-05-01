@@ -97,7 +97,11 @@ async fn stat_single_path(path_str: &str, working_dir: &Path) -> FileStatResult 
         }
     };
 
-    if !canonical_path.exists() {
+    // Check for broken symlinks: symlink_metadata succeeds even if target is missing
+    let symlink_meta = tokio::fs::symlink_metadata(&canonical_path).await.ok();
+    let is_broken_symlink = symlink_meta.as_ref().map(|m| m.is_symlink()).unwrap_or(false);
+
+    if !canonical_path.exists() && !is_broken_symlink {
         return FileStatResult {
             path: strip_unc_prefix(&canonical_path.to_string_lossy()),
             name: canonical_path

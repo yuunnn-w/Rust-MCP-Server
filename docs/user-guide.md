@@ -67,7 +67,7 @@ The WebUI provides a Cyberpunk AI Command Center:
 
 ### Enabling/Disabling Tools
 
-**Important:** By default, 11 tools are enabled for security: `calculator`, `dir_list`, `file_read`, `file_search`, `image_read`, `file_stat`, `path_exists`, `json_query`, `git_ops`, `env_get`, and `execute_python`.
+**Important:** By default, 11 tools are enabled for security: `calculator`, `dir_list`, `file_read`, `file_search`, `image_read`, `file_stat`, `path_exists`, `json_query`, `git_ops`, `env_get`, and `execute_python`. Dangerous tools (`execute_command`, `file_write`, `file_ops`, `file_edit`) are disabled by default.
 
 1. Open WebUI at `http://127.0.0.1:2233`
 2. Find the tool card in the grid
@@ -324,24 +324,22 @@ Execute shell commands with security checks (dangerous).
 ```
 
 #### execute_python
-Execute Python code in a sandboxed environment (safe by default). Useful for precise calculations, data processing, and logic evaluation.
+Execute Python code in a sandboxed environment. Useful for precise calculations, data processing, and logic evaluation. **Disabled by default** — enable via WebUI.
 
 **Sandbox Mode (Default):**
-- Filesystem access is disabled (`open()`, `os` module blocked)
+- Filesystem access is disabled (`builtins.open`, `_io.open`, and `_io.FileIO` are blocked)
+- Blocked modules: `os`, `nt`, `posix`, `subprocess`, `socket`, `urllib`, `http.client`, `ctypes`, `platform`, `importlib`
 - Available stdlib modules: `math`, `random`, `statistics`, `datetime`, `itertools`, `functools`, `collections`, `re`, `string`, `json`, `fractions`, `decimal`, `typing`, `hashlib`, `base64`, `bisect`, `heapq`, `copy`, `pprint`, `enum`, `types`, `dataclasses`, `inspect`, `sys`
-- Assign return value to `__result`; last line auto-evaluates if `__result` is not set
+- Assign return value to `__result`; last non-comment line auto-evaluates if `__result` is not set
+- Execution timeout uses trace-based self-termination inside the VM
 
 **Filesystem Mode:**
 - Enable via WebUI "Filesystem" toggle on the `execute_python` card
 - When enabled, `__working_dir` is injected into globals
-- All Python file operations are restricted to the configured working directory
+- `open()` is wrapped to restrict paths to the configured working directory
 
 **Parameters:**
-- `code` (string): Python code to execute
-- `timeout_ms` (number, optional): Timeout in milliseconds (default: 5000, max: 30000)
-
-**Parameters:**
-- `code` (string): Python code to execute
+- `code` (string): Python code to execute (max 10,000 characters)
 - `timeout_ms` (number, optional): Timeout in milliseconds (default: 5000, max: 30000)
 
 **Returns:**
@@ -352,8 +350,8 @@ Execute Python code in a sandboxed environment (safe by default). Useful for pre
 
 **Notes:**
 - Assign the desired return value to `__result`
-- If `__result` is not set, the last line is automatically evaluated as an expression
-- The global variable `__working_dir` contains the server working directory
+- If `__result` is not set, the last non-comment line is automatically evaluated as an expression
+- The global variable `__working_dir` contains the server working directory when filesystem access is enabled
 - Python standard library modules (math, random, statistics, datetime, etc.) are available
 
 **Example:**
@@ -437,7 +435,7 @@ Encode or decode base64.
 ```
 
 #### hash_compute
-Compute hash of string or file.
+Compute hash of string or file. File hashing uses streaming 8KB chunked reads to avoid memory exhaustion on large files.
 
 **Parameters:**
 - `input` (string): String to hash, or path with `file:` prefix for file

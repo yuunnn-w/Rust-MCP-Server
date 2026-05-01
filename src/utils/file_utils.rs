@@ -1,26 +1,38 @@
+use std::cell::RefCell;
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 use chrono::{DateTime, Local};
 
+thread_local! {
+    static GLOB_CACHE: RefCell<HashMap<String, regex::Regex>> = RefCell::new(HashMap::new());
+}
+
 /// Match a glob pattern against a file name. Supports * and ? wildcards.
+/// Compiled regexes are cached per-thread to avoid recompilation on every call.
 pub fn glob_match(pattern: &str, name: &str) -> bool {
-    let mut regex_str = String::new();
-    regex_str.push('^');
-    for ch in pattern.chars() {
-        match ch {
-            '*' => regex_str.push_str(".*"),
-            '?' => regex_str.push('.'),
-            '.' | '+' | '(' | ')' | '[' | ']' | '{' | '}' | '\\' | '^' | '$' | '|' => {
-                regex_str.push('\\');
-                regex_str.push(ch);
+    GLOB_CACHE.with(|cache| {
+        let mut cache = cache.borrow_mut();
+        let regex = cache.entry(pattern.to_string()).or_insert_with(|| {
+            let mut regex_str = String::new();
+            regex_str.push('^');
+            for ch in pattern.chars() {
+                match ch {
+                    '*' => regex_str.push_str(".*"),
+                    '?' => regex_str.push('.'),
+                    '.' | '+' | '(' | ')' | '[' | ']' | '{' | '}' | '\\' | '^' | '$' | '|' => {
+                        regex_str.push('\\');
+                        regex_str.push(ch);
+                    }
+                    _ => regex_str.push(ch),
+                }
             }
-            _ => regex_str.push(ch),
-        }
-    }
-    regex_str.push('$');
-    regex::Regex::new(&regex_str)
-        .map(|re| re.is_match(name))
-        .unwrap_or(false)
+            regex_str.push('$');
+            regex::Regex::new(&regex_str)
+                .unwrap_or_else(|_| regex::Regex::new("(?!)").unwrap())
+        });
+        regex.is_match(name)
+    })
 }
 
 /// Strip Windows UNC prefix (`\\?\`) from path strings.

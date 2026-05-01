@@ -171,6 +171,35 @@ Update configuration (limited options).
 
 **Note:** Changes to `mcp_transport`, `mcp_host`, `mcp_port`, `webui_host`, `webui_port`, `log_level`, or `working_dir` require a server restart to take full effect. The response will include `restart_required: true` when this is the case.
 
+### System Metrics
+
+#### GET /api/system-metrics
+Get real-time system resource usage.
+
+**Response:**
+```json
+{
+  "cpu_percent": 12.5,
+  "memory_total": 17179869184,
+  "memory_used": 8589934592,
+  "memory_percent": 50.0,
+  "cpu_cores": 8,
+  "uptime_seconds": 3600,
+  "load_average": [0.5, 0.3, 0.2],
+  "process_count": 245
+}
+```
+
+**Fields:**
+- `cpu_percent`: Global CPU usage percentage (0-100)
+- `memory_total`: Total physical memory in bytes
+- `memory_used`: Used physical memory in bytes
+- `memory_percent`: Memory usage percentage (0-100)
+- `cpu_cores`: Number of logical CPU cores
+- `uptime_seconds`: System uptime in seconds
+- `load_average`: 1min, 5min, 15min average load (may be zero on Windows)
+- `process_count`: Total number of running processes
+
 ### MCP Service Control
 
 #### POST /api/mcp/start
@@ -465,7 +494,7 @@ Response:
       },
       {
         "name": "execute_python",
-        "description": "Execute Python code in a sandboxed environment (safe by default). Set __result for return value. Available modules: math, random, statistics, datetime, itertools, functools, collections, re, string, json, fractions, decimal, typing, hashlib, base64, bisect, heapq, copy, pprint, enum, types, dataclasses, inspect, sys. Filesystem access is toggleable via WebUI.",
+        "description": "Execute Python code in a sandboxed environment (filesystem access is disabled by default; safe). Set __result for return value. Available modules: math, random, statistics, datetime, itertools, functools, collections, re, string, json, fractions, decimal, typing, hashlib, base64, bisect, heapq, copy, pprint, enum, types, dataclasses, inspect, sys. Filesystem access is toggleable via WebUI.",
         "inputSchema": {
           "type": "object",
           "properties": {
@@ -571,9 +600,17 @@ Error Response:
 | Status | Endpoint | Meaning |
 |--------|----------|---------|
 | 200 | All | Success |
-| 400 | /api/config | Invalid configuration |
-| 404 | /api/tool/{name}/* | Tool not found |
+| 400 | `/api/config`, `/api/tool/{name}/enable` | Invalid parameters (e.g., out-of-range concurrency, invalid transport/log_level) |
+| 404 | `/api/tool/{name}/*`, `/api/search`, unknown `/api/*` routes | Tool not found or endpoint does not exist |
 | 500 | All | Internal server error |
+
+**Error Response Body (REST API):**
+```json
+{
+  "success": false,
+  "error": "Tool 'unknown_tool' not found"
+}
+```
 
 ## Examples
 

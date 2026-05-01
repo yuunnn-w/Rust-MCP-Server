@@ -28,22 +28,22 @@ pub async fn path_exists(
 
     let canonical_path = resolve_path(path, working_dir)?;
 
-    let (exists, path_type) = if !canonical_path.exists() {
-        (false, "none".to_string())
-    } else {
-        let metadata = tokio::fs::symlink_metadata(&canonical_path)
-            .await
-            .map_err(|e| format!("Failed to stat '{}': {}", canonical_path.display(), e))?;
+    // Check symlink metadata first to detect broken symlinks
+    let metadata = tokio::fs::symlink_metadata(&canonical_path).await.ok();
 
-        if metadata.is_symlink() {
+    let (exists, path_type) = if let Some(meta) = metadata {
+        if meta.is_symlink() {
+            // Symlink exists (even if target is broken)
             (true, "symlink".to_string())
-        } else if canonical_path.is_dir() {
+        } else if meta.is_dir() {
             (true, "dir".to_string())
-        } else if canonical_path.is_file() {
+        } else if meta.is_file() {
             (true, "file".to_string())
         } else {
             (true, "unknown".to_string())
         }
+    } else {
+        (false, "none".to_string())
     };
 
     let result = PathExistsResult {

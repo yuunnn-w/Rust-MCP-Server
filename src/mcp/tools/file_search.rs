@@ -100,34 +100,34 @@ struct SearchResponse {
     searched_files: usize,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     skipped_dirs: Vec<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    skipped_files: Vec<String>,
     truncated: bool,
 }
 
 fn search_in_file(
     file_path: &Path,
     keyword: &str,
-    use_regex: bool,
+    precompiled_re: Option<&regex::Regex>,
     context_lines: usize,
     output_format: &str,
+    max_matches: usize,
+    current_match_count: &mut usize,
 ) -> Result<Vec<MatchEntry>, String> {
     let content = std::fs::read_to_string(file_path)
         .map_err(|e| format!("Failed to read '{}': {}", file_path.display(), e))?;
 
     let lines: Vec<&str> = content.lines().collect();
-    let re = if use_regex {
-        Some(
-            regex::Regex::new(keyword)
-                .map_err(|e| format!("Invalid regex '{}': {}", keyword, e))?,
-        )
-    } else {
-        None
-    };
 
     let keyword_lower = keyword.to_lowercase();
     let mut matches = Vec::new();
 
     for (idx, line) in lines.iter().enumerate() {
-        let matched = if let Some(ref re) = re {
+        if *current_match_count >= max_matches {
+            break;
+        }
+
+        let matched = if let Some(re) = precompiled_re {
             re.is_match(line)
         } else {
             line.to_lowercase().contains(&keyword_lower)
@@ -155,6 +155,7 @@ fn search_in_file(
                 text: line.to_string(),
                 context,
             });
+            *current_match_count += 1;
         }
     }
 
@@ -164,19 +165,25 @@ fn search_in_file(
 fn search_directory(
     dir_path: &Path,
     keyword: &str,
-    use_regex: bool,
+    precompiled_re: Option<&regex::Regex>,
     file_pattern: Option<&str>,
     context_lines: usize,
     max_results: usize,
     current_depth: usize,
     searched_files: &mut usize,
     skipped_dirs: &mut Vec<String>,
+    skipped_files: &mut Vec<String>,
     results: &mut Vec<MatchResult>,
     total_matches: &mut usize,
     output_format: &str,
 ) -> Result<(), String> {
     if current_depth > MAX_DEPTH {
         skipped_dirs.push(dir_path.to_string_lossy().to_string());
+        return Ok(());
+    }
+
+    // Check if we've already reached max_results before doing more work
+    if *total_matches >= max_results {
         return Ok(());
     }
 
@@ -195,25 +202,35 @@ fn search_directory(
         let name = entry.file_name();
         let name_str = name.to_string_lossy();
 
-        if path.is_dir() {
+        let file_type = match entry.file_type() {
+            Ok(ft) => ft,
+            Err(_) => continue,
+        };
+
+        if file_type.is_dir() {
             if should_skip_dir(&name_str) {
                 continue;
             }
             search_directory(
                 &path,
                 keyword,
-                use_regex,
+                precompiled_re,
                 file_pattern,
                 context_lines,
                 max_results,
                 current_depth + 1,
                 searched_files,
                 skipped_dirs,
+                skipped_files,
                 results,
                 total_matches,
                 output_format,
             )?;
-        } else if path.is_file() {
+            // Early exit if max_results reached after recursion
+            if *total_matches >= max_results {
+                return Ok(());
+            }
+        } else if file_type.is_file() {
             if let Some(pat) = file_pattern {
                 if !glob_match(pat, &name_str) {
                     continue;
@@ -232,14 +249,23 @@ fn search_directory(
 
             *searched_files += 1;
 
-            if let Ok(file_matches) = search_in_file(&path, keyword, use_regex, context_lines, output_format) {
-                if !file_matches.is_empty() {
-                    *total_matches += file_matches.len();
-                    results.push(MatchResult {
-                        file: path.to_string_lossy().to_string(),
-                        matches: file_matches,
-                    });
+            match search_in_file(&path, keyword, precompiled_re, context_lines, output_format, max_results, total_matches) {
+                Ok(file_matches) => {
+                    if !file_matches.is_empty() {
+                        results.push(MatchResult {
+                            file: path.to_string_lossy().to_string(),
+                            matches: file_matches,
+                        });
+                    }
                 }
+                Err(e) => {
+                    skipped_files.push(format!("{}: {}", path.display(), e));
+                }
+            }
+
+            // Early exit if max_results reached
+            if *total_matches >= max_results {
+                return Ok(());
             }
         }
     }
@@ -272,21 +298,36 @@ pub async fn file_search(
     let output_format = params.output_format.as_deref().unwrap_or("detailed");
     let file_pattern = params.file_pattern.as_deref();
 
+    // Pre-compile regex once if needed
+    let precompiled_re = if use_regex {
+        Some(
+            regex::Regex::new(keyword)
+                .map_err(|e| format!("Invalid regex '{}': {}", keyword, e))?,
+        )
+    } else {
+        None
+    };
+
     let mut searched_files = 0usize;
     let mut skipped_dirs: Vec<String> = Vec::new();
+    let mut skipped_files: Vec<String> = Vec::new();
     let mut results: Vec<MatchResult> = Vec::new();
     let mut total_matches = 0usize;
 
     if canonical_path.is_file() {
         searched_files = 1;
         if is_text_file(&canonical_path) {
-            if let Ok(file_matches) = search_in_file(&canonical_path, keyword, use_regex, context_lines, output_format) {
-                total_matches = file_matches.len();
-                if !file_matches.is_empty() {
-                    results.push(MatchResult {
-                        file: canonical_path.to_string_lossy().to_string(),
-                        matches: file_matches,
-                    });
+            match search_in_file(&canonical_path, keyword, precompiled_re.as_ref(), context_lines, output_format, max_results, &mut total_matches) {
+                Ok(file_matches) => {
+                    if !file_matches.is_empty() {
+                        results.push(MatchResult {
+                            file: canonical_path.to_string_lossy().to_string(),
+                            matches: file_matches,
+                        });
+                    }
+                }
+                Err(e) => {
+                    skipped_files.push(format!("{}: {}", canonical_path.display(), e));
                 }
             }
         }
@@ -294,22 +335,23 @@ pub async fn file_search(
         search_directory(
             &canonical_path,
             keyword,
-            use_regex,
+            precompiled_re.as_ref(),
             file_pattern,
             context_lines,
             max_results,
             0,
             &mut searched_files,
             &mut skipped_dirs,
+            &mut skipped_files,
             &mut results,
             &mut total_matches,
             output_format,
         )?;
     }
 
-    let truncated = total_matches > max_results;
+    let truncated = total_matches >= max_results;
 
-    // Truncate results if exceeding max_results
+    // Truncate results if exceeding max_results (safety net)
     let mut remaining = max_results;
     let mut final_results: Vec<MatchResult> = Vec::new();
     for mut r in results {
@@ -344,6 +386,7 @@ pub async fn file_search(
             location_results: None,
             searched_files,
             skipped_dirs,
+            skipped_files,
             truncated,
         }
     } else if output_format == "compact" {
@@ -367,6 +410,7 @@ pub async fn file_search(
             location_results: None,
             searched_files,
             skipped_dirs,
+            skipped_files,
             truncated,
         }
     } else if output_format == "location" {
@@ -387,6 +431,7 @@ pub async fn file_search(
             location_results: Some(location_results),
             searched_files,
             skipped_dirs,
+            skipped_files,
             truncated,
         }
     } else {
@@ -399,6 +444,7 @@ pub async fn file_search(
             location_results: None,
             searched_files,
             skipped_dirs,
+            skipped_files,
             truncated,
         }
     };
@@ -566,6 +612,33 @@ mod tests {
         if let Ok(ref call_result) = result {
             if let Some(text) = call_result.content.first().and_then(|c| c.as_text()) {
                 assert!(text.text.contains("total_matches") && text.text.contains("0"));
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn test_search_max_results_early_stop() {
+        let temp_dir = TempDir::new().unwrap();
+        fs::write(temp_dir.path().join("file1.txt"), "Hello World\nHello Again").unwrap();
+        fs::write(temp_dir.path().join("file2.txt"), "Hello Universe\nHello Galaxy").unwrap();
+
+        let params = FileSearchParams {
+            path: temp_dir.path().to_string_lossy().to_string(),
+            keyword: "hello".to_string(),
+            file_pattern: None,
+            use_regex: None,
+            max_results: Some(2),
+            context_lines: Some(0),
+            brief: Some(false),
+            output_format: None,
+        };
+
+        let result = file_search(Parameters(params), temp_dir.path()).await;
+        assert!(result.is_ok());
+        if let Ok(ref call_result) = result {
+            if let Some(text) = call_result.content.first().and_then(|c| c.as_text()) {
+                assert!(text.text.contains("\"truncated\": true"));
+                assert!(text.text.contains("\"total_matches\": 2"));
             }
         }
     }

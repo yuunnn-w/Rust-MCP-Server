@@ -59,12 +59,20 @@ async fn static_handler(uri: Uri) -> impl IntoResponse {
     match StaticFiles::get(path) {
         Some(content) => {
             let mime_type = mime_guess::from_path(path).first_or_octet_stream();
-            Response::builder()
+            match Response::builder()
                 .header(header::CONTENT_TYPE, mime_type.as_ref())
                 .body(Body::from(content.data))
-                .unwrap()
+            {
+                Ok(response) => response,
+                Err(_) => (StatusCode::INTERNAL_SERVER_ERROR, "Internal Server Error").into_response(),
+            }
         }
         None => {
+            // Don't serve index.html for unknown API routes — return proper 404
+            if path.starts_with("api/") {
+                return (StatusCode::NOT_FOUND, "Not Found").into_response();
+            }
+            
             // Try to serve index.html for SPA routing
             if let Some(content) = StaticFiles::get("index.html") {
                 Html(content.data).into_response()

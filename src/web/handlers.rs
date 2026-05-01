@@ -2,7 +2,8 @@ use crate::mcp::state::ServerState;
 
 use axum::{
     extract::{Path, State},
-    response::sse::{Event, Sse},
+    http::StatusCode,
+    response::{IntoResponse, sse::{Event, Sse}},
     Json,
 };
 use serde::{Deserialize, Serialize};
@@ -10,6 +11,26 @@ use std::convert::Infallible;
 use std::sync::Arc;
 use std::time::Instant;
 use tokio::sync::broadcast;
+
+/// Custom API error type with proper HTTP status codes
+pub enum ApiError {
+    NotFound(String),
+    BadRequest(String),
+}
+
+impl IntoResponse for ApiError {
+    fn into_response(self) -> axum::response::Response {
+        let (status, message) = match self {
+            ApiError::NotFound(msg) => (StatusCode::NOT_FOUND, msg),
+            ApiError::BadRequest(msg) => (StatusCode::BAD_REQUEST, msg),
+        };
+        let body = Json(serde_json::json!({
+            "success": false,
+            "error": message
+        }));
+        (status, body).into_response()
+    }
+}
 
 /// Tool status response
 #[derive(Debug, Serialize)]
@@ -93,22 +114,22 @@ pub async fn get_tools(State(state): State<Arc<ServerState>>) -> Json<ToolsRespo
     let mut tools = Vec::new();
     
     for status in tool_statuses {
-        // Get the actual status from the state to check is_busy
-        let is_busy = if let Some(s) = state.tool_status.get(&status.name) {
+        // Read is_calling and is_busy consistently from the same source
+        let (is_calling, is_busy) = if let Some(s) = state.tool_status.get(&status.name) {
             let status_ref = s.value();
-            // Clone to avoid holding the lock
             let last_end = *status_ref.last_call_end.read().await;
-            let is_calling = status_ref.is_calling;
+            let calling = status_ref.is_calling;
             
-            if is_calling {
+            let busy = if calling {
                 true
             } else if let Some(end_time) = last_end {
                 Instant::now().duration_since(end_time) < std::time::Duration::from_secs(5)
             } else {
                 false
-            }
+            };
+            (calling, busy)
         } else {
-            status.is_calling
+            (status.is_calling, status.is_calling)
         };
         
         tools.push(ToolStatusResponse {
@@ -116,7 +137,7 @@ pub async fn get_tools(State(state): State<Arc<ServerState>>) -> Json<ToolsRespo
             description: status.description.clone(),
             enabled: status.enabled,
             call_count: status.call_count,
-            is_calling: status.is_calling,
+            is_calling,
             is_busy,
             is_dangerous: status.is_dangerous,
         });
@@ -143,10 +164,10 @@ pub async fn get_server_status(State(state): State<Arc<ServerState>>) -> Json<Se
 pub async fn get_tool_stats(
     State(state): State<Arc<ServerState>>,
     Path(name): Path<String>,
-) -> Result<Json<ToolStatsResponse>, String> {
+) -> Result<Json<ToolStatsResponse>, ApiError> {
     let status = state
         .get_tool_status(&name)
-        .ok_or_else(|| format!("Tool '{}' not found", name))?;
+        .ok_or_else(|| ApiError::NotFound(format!("Tool '{}' not found", name)))?;
 
     let recent_calls_15min = status.get_recent_calls_count(15).await;
     let stats_history = status.get_stats(120, 5).await; // 120 minutes, 5 minute intervals
@@ -234,35 +255,45 @@ pub async fn get_config(State(state): State<Arc<ServerState>>) -> Json<ConfigRes
 pub async fn update_config(
     State(state): State<Arc<ServerState>>,
     Json(request): Json<UpdateConfigRequest>,
-) -> Result<Json<serde_json::Value>, String> {
-    let mut changes = Vec::new();
-    let mut restart_required = false;
-    let mut config = state.config.write().await;
-
-    // Validate and update max_concurrency
+) -> Result<Json<serde_json::Value>, ApiError> {
+    // Validate all parameters before acquiring the lock
     if let Some(max_concurrency) = request.max_concurrency {
         if max_concurrency == 0 || max_concurrency > 1000 {
-            return Err("max_concurrency must be between 1 and 1000".to_string());
+            return Err(ApiError::BadRequest("max_concurrency must be between 1 and 1000".to_string()));
         }
+    }
+
+    if let Some(ref mcp_transport) = request.mcp_transport {
+        if !matches!(mcp_transport.as_str(), "http" | "sse") {
+            return Err(ApiError::BadRequest("mcp_transport must be one of: http, sse".to_string()));
+        }
+    }
+
+    if let Some(ref log_level) = request.log_level {
+        if !matches!(log_level.as_str(), "trace" | "debug" | "info" | "warn" | "error") {
+            return Err(ApiError::BadRequest("log_level must be one of: trace, debug, info, warn, error".to_string()));
+        }
+    }
+
+    let mut changes = Vec::new();
+    let mut restart_required = false;
+    let mut max_concurrency_updated = None;
+
+    // Acquire write lock once for all modifications
+    let mut config = state.config.write().await;
+
+    if let Some(max_concurrency) = request.max_concurrency {
         config.max_concurrency = max_concurrency;
-        drop(config); // Release write lock before calling set_max_concurrency
-        state.set_max_concurrency(max_concurrency).await;
-        config = state.config.write().await; // Re-acquire lock
         changes.push(format!("max_concurrency: {}", max_concurrency));
+        max_concurrency_updated = Some(max_concurrency);
     }
 
-    // Transport change requires restart
     if let Some(mcp_transport) = request.mcp_transport {
-        if matches!(mcp_transport.as_str(), "http" | "sse") {
-            config.mcp_transport = mcp_transport.clone();
-            changes.push(format!("mcp_transport: {}", mcp_transport));
-            restart_required = true;
-        } else {
-            return Err("mcp_transport must be one of: http, sse".to_string());
-        }
+        config.mcp_transport = mcp_transport.clone();
+        changes.push(format!("mcp_transport: {}", mcp_transport));
+        restart_required = true;
     }
 
-    // These changes require restart
     if let Some(mcp_host) = request.mcp_host {
         if !mcp_host.is_empty() {
             config.mcp_host = mcp_host.clone();
@@ -296,13 +327,9 @@ pub async fn update_config(
     }
 
     if let Some(log_level) = request.log_level {
-        if matches!(log_level.as_str(), "trace" | "debug" | "info" | "warn" | "error") {
-            config.log_level = log_level.clone();
-            changes.push(format!("log_level: {}", log_level));
-            restart_required = true;
-        } else {
-            return Err("log_level must be one of: trace, debug, info, warn, error".to_string());
-        }
+        config.log_level = log_level.clone();
+        changes.push(format!("log_level: {}", log_level));
+        restart_required = true;
     }
 
     if let Some(working_dir) = request.working_dir {
@@ -313,7 +340,12 @@ pub async fn update_config(
         }
     }
 
-    drop(config); // Release lock before returning
+    drop(config); // Release lock before side effects
+
+    // Apply side effects outside the lock
+    if let Some(max_concurrency) = max_concurrency_updated {
+        state.set_max_concurrency(max_concurrency).await;
+    }
 
     let message = if restart_required {
         "Configuration updated. Restart server to apply all changes."
@@ -351,7 +383,7 @@ pub async fn stop_mcp(State(state): State<Arc<ServerState>>) -> Json<serde_json:
     }))
 }
 
-/// Restart MCP service (toggles status flag only, not a full process restart)
+/// Restart MCP service signal (toggles status flag only, not a full process restart)
 pub async fn restart_mcp(State(state): State<Arc<ServerState>>) -> Json<serde_json::Value> {
     tracing::info!("Received request to restart MCP service");
     state.set_mcp_running(false).await;

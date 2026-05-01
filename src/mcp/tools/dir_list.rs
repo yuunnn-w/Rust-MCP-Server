@@ -6,7 +6,7 @@ use rmcp::handler::server::wrapper::Parameters;
 use rmcp::model::CallToolResult;
 use rmcp::schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct DirListParams {
@@ -51,6 +51,10 @@ struct FileEntry {
     line_count: Option<usize>,
     #[serde(skip_serializing_if = "Option::is_none")]
     children: Option<Vec<FileEntry>>,
+    #[serde(skip)]
+    raw_size: Option<u64>,
+    #[serde(skip)]
+    raw_modified: Option<std::time::SystemTime>,
 }
 
 #[derive(Debug, Serialize)]
@@ -86,91 +90,100 @@ pub async fn dir_list(
     let include_hidden = params.include_hidden.unwrap_or(false);
     let brief = params.brief.unwrap_or(true);
     let sort_by = params.sort_by.as_deref().unwrap_or("name").to_lowercase();
-    let pattern = params.pattern.as_deref();
+    let pattern = params.pattern.clone();
     let flatten = params.flatten.unwrap_or(false);
+    let path_str = params.path.clone();
+    let working_dir = working_dir.to_path_buf();
 
-    let path = Path::new(&params.path);
-    let canonical_path = resolve_path(path, working_dir)?;
+    let path = Path::new(&path_str);
+    let canonical_path = resolve_path(path, &working_dir)?;
 
     if !canonical_path.exists() {
-        return Err(format!("Path '{}' does not exist", params.path));
+        return Err(format!("Path '{}' does not exist", path_str));
     }
     if !canonical_path.is_dir() {
-        return Err(format!("Path '{}' is not a directory", params.path));
+        return Err(format!("Path '{}' is not a directory", path_str));
     }
 
-    let mut total_files = 0usize;
-    let mut total_dirs = 0usize;
+    let canonical_path_str = canonical_path.to_string_lossy().to_string();
+    let response = tokio::task::spawn_blocking(move || {
+        let canonical_path = Path::new(&canonical_path_str);
+        let mut total_files = 0usize;
+        let mut total_dirs = 0usize;
 
-    let response = if flatten {
-        let mut entries = Vec::new();
-        let (truncated, max_depth_reached) = list_directory_flat(
-            &canonical_path,
-            &canonical_path,
-            max_depth,
-            0,
-            include_hidden,
-            brief,
-            &sort_by,
-            pattern,
-            &mut total_files,
-            &mut total_dirs,
-            &mut entries,
-        )
-        .map_err(|e| format!("Failed to list directory: {}", e))?;
+        let response = if flatten {
+            let mut entries = Vec::new();
+            let (truncated, max_depth_reached) = list_directory_flat(
+                canonical_path,
+                canonical_path,
+                max_depth,
+                0,
+                include_hidden,
+                brief,
+                &sort_by,
+                pattern.as_deref(),
+                &mut total_files,
+                &mut total_dirs,
+                &mut entries,
+            )?;
 
-        // Sort flat entries
-        sort_entries(&mut entries, &sort_by, Some(&canonical_path));
+            // Sort flat entries
+            sort_entries(&mut entries, &sort_by, Some(canonical_path));
 
-        let metadata = std::fs::metadata(&canonical_path).ok();
-        DirListResponse {
-            name: canonical_path
-                .file_name()
-                .map(|n| n.to_string_lossy().to_string())
-                .unwrap_or_else(|| canonical_path.to_string_lossy().to_string()),
-            path: strip_unc_prefix(&canonical_path.to_string_lossy()),
-            is_dir: true,
-            size: None,
-            modified: metadata.and_then(|m| m.modified().ok()).map(format_datetime),
-            children: None,
-            entries: Some(entries),
-            summary: Summary {
-                total_files,
-                total_dirs,
-                truncated,
-                max_depth_reached,
-            },
-        }
-    } else {
-        let (entry, truncated, max_depth_reached) = list_directory_recursive(
-            &canonical_path,
-            max_depth,
-            0,
-            include_hidden,
-            brief,
-            &sort_by,
-            pattern,
-            &mut total_files,
-            &mut total_dirs,
-        )
-        .map_err(|e| format!("Failed to list directory: {}", e))?;
+            let metadata = std::fs::metadata(canonical_path).ok();
+            DirListResponse {
+                name: canonical_path
+                    .file_name()
+                    .map(|n| n.to_string_lossy().to_string())
+                    .unwrap_or_else(|| canonical_path.to_string_lossy().to_string()),
+                path: strip_unc_prefix(&canonical_path.to_string_lossy()),
+                is_dir: true,
+                size: None,
+                modified: metadata.and_then(|m| m.modified().ok()).map(format_datetime),
+                children: None,
+                entries: Some(entries),
+                summary: Summary {
+                    total_files,
+                    total_dirs,
+                    truncated,
+                    max_depth_reached,
+                },
+            }
+        } else {
+            let (entry, truncated, max_depth_reached) = list_directory_recursive(
+                canonical_path,
+                max_depth,
+                0,
+                include_hidden,
+                brief,
+                &sort_by,
+                pattern.as_deref(),
+                &mut total_files,
+                &mut total_dirs,
+            )?;
 
-        DirListResponse {
-            name: entry.name,
-            path: entry.path,
-            is_dir: entry.is_dir,
-            size: entry.size,
-            modified: entry.modified,
-            children: entry.children,
-            entries: None,
-            summary: Summary {
-                total_files,
-                total_dirs,
-                truncated,
-                max_depth_reached,
-            },
-        }
-    };
+            DirListResponse {
+                name: entry.name,
+                path: entry.path,
+                is_dir: entry.is_dir,
+                size: entry.size,
+                modified: entry.modified,
+                children: entry.children,
+                entries: None,
+                summary: Summary {
+                    total_files,
+                    total_dirs,
+                    truncated,
+                    max_depth_reached,
+                },
+            }
+        };
+
+        Ok::<DirListResponse, std::io::Error>(response)
+    })
+    .await
+    .map_err(|e| format!("Directory listing task failed: {}", e))?
+    .map_err(|e| format!("Failed to list directory: {}", e))?;
 
     let json = serde_json::to_string_pretty(&response).map_err(|e| e.to_string())?;
     Ok(CallToolResult::success(vec![rmcp::model::Content::text(json)]))
@@ -228,7 +241,9 @@ fn list_directory_flat(
         let metadata = item.metadata()?;
         let is_dir = metadata.is_dir();
         let entry_path = item.path();
-        let rel_path = entry_path.strip_prefix(root_path).unwrap_or(&entry_path);
+        let rel_path = entry_path.strip_prefix(root_path).unwrap_or_else(|_| {
+            Path::new(entry_path.file_name().unwrap_or_default())
+        });
 
         let size = if is_dir || brief {
             None
@@ -260,6 +275,8 @@ fn list_directory_flat(
             char_count,
             line_count,
             children: None,
+            raw_size: Some(metadata.len()),
+            raw_modified: metadata.modified().ok(),
         });
 
         if is_dir {
@@ -339,6 +356,8 @@ fn list_directory_recursive(
         char_count,
         line_count,
         children: None,
+        raw_size: Some(metadata.len()),
+        raw_modified: metadata.modified().ok(),
     };
 
     let mut truncated = false;
@@ -416,7 +435,7 @@ fn list_directory_recursive(
     Ok((entry, truncated, max_depth_reached))
 }
 
-fn sort_entries(children: &mut Vec<FileEntry>, sort_by: &str, base_path: Option<&Path>) {
+fn sort_entries(children: &mut Vec<FileEntry>, sort_by: &str, _base_path: Option<&Path>) {
     children.sort_by(|a, b| match sort_by {
         "type" => match (a.is_dir, b.is_dir) {
             (true, false) => std::cmp::Ordering::Less,
@@ -424,14 +443,8 @@ fn sort_entries(children: &mut Vec<FileEntry>, sort_by: &str, base_path: Option<
             _ => a.name.cmp(&b.name),
         },
         "size" => {
-            let path_a = base_path
-                .map(|bp| bp.join(&a.path))
-                .unwrap_or_else(|| PathBuf::from(&a.path));
-            let path_b = base_path
-                .map(|bp| bp.join(&b.path))
-                .unwrap_or_else(|| PathBuf::from(&b.path));
-            let size_a = std::fs::metadata(&path_a).map(|m| m.len()).unwrap_or(0);
-            let size_b = std::fs::metadata(&path_b).map(|m| m.len()).unwrap_or(0);
+            let size_a = a.raw_size.unwrap_or(0);
+            let size_b = b.raw_size.unwrap_or(0);
             match (a.is_dir, b.is_dir) {
                 (true, false) => std::cmp::Ordering::Less,
                 (false, true) => std::cmp::Ordering::Greater,
@@ -439,14 +452,8 @@ fn sort_entries(children: &mut Vec<FileEntry>, sort_by: &str, base_path: Option<
             }
         }
         "modified" => {
-            let path_a = base_path
-                .map(|bp| bp.join(&a.path))
-                .unwrap_or_else(|| PathBuf::from(&a.path));
-            let path_b = base_path
-                .map(|bp| bp.join(&b.path))
-                .unwrap_or_else(|| PathBuf::from(&b.path));
-            let time_a = std::fs::metadata(&path_a).and_then(|m| m.modified()).ok();
-            let time_b = std::fs::metadata(&path_b).and_then(|m| m.modified()).ok();
+            let time_a = a.raw_modified;
+            let time_b = b.raw_modified;
             match (a.is_dir, b.is_dir) {
                 (true, false) => std::cmp::Ordering::Less,
                 (false, true) => std::cmp::Ordering::Greater,

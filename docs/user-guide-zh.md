@@ -67,7 +67,7 @@ WebUI 提供 Cyberpunk AI Command Center 控制面板：
 
 ### 启用/禁用工具
 
-**重要提示:** 默认情况下，以下 11 个工具为安全起见是启用的：`calculator`、`dir_list`、`file_read`、`file_search`、`image_read`、`file_stat`、`path_exists`、`json_query`、`git_ops`、`env_get`、`execute_python`。
+**重要提示:** 默认情况下，以下 11 个工具为安全起见是启用的：`calculator`、`dir_list`、`file_read`、`file_search`、`image_read`、`file_stat`、`path_exists`、`json_query`、`git_ops`、`env_get`、`execute_python`。危险工具（`execute_command`、`file_write`、`file_ops`、`file_edit`）默认禁用。
 
 1. 打开 WebUI 访问 `http://127.0.0.1:2233`
 2. 在工具网格中找到对应工具卡片
@@ -319,25 +319,23 @@ WebUI 提供 Cyberpunk AI Command Center 控制面板：
 ```
 
 #### execute_python
-在沙箱环境中执行 Python 代码（默认安全）。适用于精确计算、数据处理和逻辑评估。
+在沙箱环境中执行 Python 代码。适用于精确计算、数据处理和逻辑评估。**默认禁用** —— 请通过 WebUI 启用。
 
 **沙箱模式（默认）：**
-- 文件系统访问被禁用（`open()`、`os` 模块被阻止）
+- 文件系统访问被禁用（`builtins.open`、`_io.open` 和 `_io.FileIO` 被阻塞）
+- 被阻止的模块：`os`、`nt`、`posix`、`subprocess`、`socket`、`urllib`、`http.client`、`ctypes`、`platform`、`importlib`
 - 可用标准库模块：`math`、`random`、`statistics`、`datetime`、`itertools`、`functools`、`collections`、`re`、`string`、`json`、`fractions`、`decimal`、`typing`、`hashlib`、`base64`、`bisect`、`heapq`、`copy`、`pprint`、`enum`、`types`、`dataclasses`、`inspect`、`sys`
-- 将返回值赋给 `__result`；若未设置，最后一行自动作为表达式求值
+- 将返回值赋给 `__result`；若未设置，最后一行非注释内容自动作为表达式求值
+- 执行超时通过 `sys.settrace` 在 VM 内部注入自终止检查
 
 **文件系统模式：**
 - 通过 WebUI 上 `execute_python` 卡片的"文件系统"开关启用
 - 启用后，`__working_dir` 被注入到全局变量中
-- 所有 Python 文件操作被限制在配置的工作目录内
+- `open()` 被包装为仅限配置的工作目录内路径
 
 **参数：**
-- `code` (string): 要执行的 Python 代码
+- `code` (string): 要执行的 Python 代码（最大 10,000 字符）
 - `timeout_ms` (number, 可选): 超时时间（毫秒，默认：5000，最大：30000）
-
-**参数：**
-- `code` (string): 要执行的 Python 代码
-- `timeout_ms` (number, 可选): 超时毫秒数（默认：5000，最大：30000）
 
 **返回：**
 - `result`: `__result` 变量的值（或未设置时自动求值的末行表达式结果）
@@ -347,8 +345,8 @@ WebUI 提供 Cyberpunk AI Command Center 控制面板：
 
 **说明：**
 - 将返回值赋给变量 `__result`
-- 若未设置 `__result`，最后一行将自动作为表达式求值
-- 全局变量 `__working_dir` 包含服务器工作目录
+- 若未设置 `__result`，最后一行非注释内容将自动作为表达式求值
+- 启用文件系统访问时，全局变量 `__working_dir` 包含服务器工作目录
 - 支持 Python 标准库模块（math、random、statistics、datetime 等）
 
 **示例：**
@@ -432,7 +430,7 @@ Base64 编码或解码。
 ```
 
 #### hash_compute
-计算字符串或文件的哈希值。
+计算字符串或文件的哈希值。文件哈希采用 8KB 流式分块读取，避免大文件导致内存耗尽。
 
 **参数：**
 - `input` (string): 要哈希的字符串，或以 `file:` 开头的文件路径

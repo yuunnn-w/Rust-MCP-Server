@@ -9,6 +9,6 @@ fn main() {
         res.set("OriginalFilename", "rust-mcp-server.exe");
         res.set("InternalName", "rust-mcp-server");
         res.set("LegalCopyright", "Copyright (c) MCP Server Team");
-        res.compile().unwrap();
+        res.compile().expect("Failed to compile Windows resources");
     }
 }

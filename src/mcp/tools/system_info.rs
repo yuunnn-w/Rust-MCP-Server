@@ -34,13 +34,14 @@ pub async fn system_info() -> Result<CallToolResult, String> {
     let cpu_usage: f32 = system.cpus().iter().map(|cpu| cpu.cpu_usage()).sum::<f32>() 
         / system.cpus().len().max(1) as f32;
 
-    // Get load average (Unix only, Windows returns 0.0)
-    let load_avg = System::load_average();
-    let load_average = if load_avg.one > 0.0 || load_avg.five > 0.0 || load_avg.fifteen > 0.0 {
+    // Get load average (Unix only)
+    #[cfg(unix)]
+    let load_average = {
+        let load_avg = System::load_average();
         Some((load_avg.one, load_avg.five, load_avg.fifteen))
-    } else {
-        None // Windows doesn't have Unix-style load average
     };
+    #[cfg(not(unix))]
+    let load_average = None;
 
     let total_memory = system.total_memory();
     let used_memory = system.used_memory();
@@ -62,7 +63,7 @@ pub async fn system_info() -> Result<CallToolResult, String> {
         cpu_usage_percent: cpu_usage,
         memory_total_mb: total_memory / 1024,
         memory_used_mb: used_memory / 1024,
-        memory_free_mb: system.free_memory() / 1024,
+        memory_free_mb: system.available_memory() / 1024,
         memory_usage_percent,
         uptime_seconds: System::uptime(),
         load_average,

@@ -82,13 +82,13 @@ Rust MCP Server 是一个使用 Rust 构建的高性能 [模型上下文协议 (
 | `http_request` | 发起 HTTP GET/POST/PUT/DELETE/PATCH/HEAD 请求 | 禁用 |
 | `git_ops` | 运行 git 命令（status、diff、log、branch、show） | 启用 |
 | `env_get` | 获取环境变量值 | 启用 |
-| `execute_python` | 在沙箱环境中执行 Python 代码（默认安全，文件系统访问可切换） | 启用 |
+| `execute_python` | 在沙箱环境中执行 Python 代码（文件系统访问可通过 WebUI 切换） | 启用 |
 
 #### 实用工具
 | 工具 | 描述 |
 |------|-------------|
 | `calculator` | 计算数学表达式 |
-| `datetime` | 获取当前日期/时间（中国时区） |
+| `datetime` | 获取当前日期/时间（本地时区） |
 | `base64_codec` | Base64 编码/解码 |
 | `hash_compute` | 计算 MD5/SHA1/SHA256 哈希 |
 
@@ -165,7 +165,7 @@ http://127.0.0.1:2233
 | `--mcp-port` | `MCP_PORT` | `3344` | MCP 服务端口 |
 | `--max-concurrency` | `MCP_MAX_CONCURRENCY` | `10` | 最大并发调用数 |
 | `--working-dir` | `MCP_WORKING_DIR` | `.` | 文件操作工作目录 |
-| `--disable-tools` | `MCP_DISABLE_TOOLS` | 见下文 | 禁用的工具列表（默认禁用10个，启用11个） |
+| `--disable-tools` | `MCP_DISABLE_TOOLS` | 见下文 | 禁用的工具列表（默认禁用11个，启用10个） |
 | `--allow-dangerous-commands` | `MCP_ALLOW_DANGEROUS_COMMANDS` | - | 允许的危险命令 ID |
 | `--log-level` | `MCP_LOG_LEVEL` | `info` | 日志级别 |
 | `--disable-webui` | - | - | 禁用 WebUI 面板 |

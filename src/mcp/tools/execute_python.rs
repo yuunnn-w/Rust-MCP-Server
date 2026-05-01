@@ -22,7 +22,7 @@ pub async fn execute_python(
     allow_fs_access: bool,
 ) -> Result<CallToolResult, String> {
     let params = params.0;
-    if params.code.len() > 10000 {
+    if params.code.chars().count() > 10000 {
         return Err("Code exceeds maximum length of 10000 characters".to_string());
     }
     let timeout = Duration::from_millis(params.timeout_ms.unwrap_or(5000).clamp(1000, 30000));
@@ -31,18 +31,21 @@ pub async fn execute_python(
     let working_dir_str = working_dir.to_string_lossy().to_string();
 
     let (tx, rx) = mpsc::channel();
+    let start = Instant::now();
     std::thread::Builder::new()
         .stack_size(8 * 1024 * 1024)
         .spawn(move || {
-            let result = run_python_code(&code, &working_dir_str, allow_fs_access);
+            let result = run_python_code(&code, &working_dir_str, allow_fs_access, start, timeout);
             let _ = tx.send(result);
         })
         .map_err(|e| format!("Failed to spawn Python execution thread: {}", e))?;
 
-    let start = Instant::now();
+    let wait_start = Instant::now();
     let result = match rx.recv_timeout(timeout) {
         Ok(r) => r,
         Err(mpsc::RecvTimeoutError::Timeout) => {
+            // Give the trace mechanism a brief grace period to terminate the thread
+            let _ = rx.recv_timeout(Duration::from_millis(500));
             return Ok(CallToolResult::error(vec![rmcp::model::Content::text(format!(
                 "Python execution timed out after {}ms. Consider simplifying the code or increasing timeout_ms.",
                 params.timeout_ms.unwrap_or(5000)
@@ -55,7 +58,7 @@ pub async fn execute_python(
         }
     };
 
-    let elapsed_ms = start.elapsed().as_millis() as u64;
+    let elapsed_ms = wait_start.elapsed().as_millis() as u64;
 
     match result {
         Ok((result_value, stdout, stderr)) => {
@@ -75,7 +78,13 @@ pub async fn execute_python(
     }
 }
 
-fn run_python_code(code: &str, working_dir: &str, allow_fs_access: bool) -> Result<(Value, String, String), String> {
+fn run_python_code(
+    code: &str,
+    working_dir: &str,
+    allow_fs_access: bool,
+    start: Instant,
+    timeout: Duration,
+) -> Result<(Value, String, String), String> {
     use rustpython_vm as vm;
     use rustpython_vm::convert::ToPyObject;
 
@@ -87,6 +96,18 @@ fn run_python_code(code: &str, working_dir: &str, allow_fs_access: bool) -> Resu
     interpreter.enter(|vm| {
         let scope = vm.new_scope_with_builtins();
 
+        // Inject timeout checker for trace-based termination
+        let check_timeout = vm.new_function(
+            "_rust_check_timeout",
+            move |_vm: &rustpython_vm::VirtualMachine| -> bool {
+                start.elapsed() > timeout
+            },
+        );
+        scope
+            .globals
+            .set_item("_rust_check_timeout", check_timeout.to_pyobject(vm), vm)
+            .ok();
+
         if allow_fs_access {
             // Inject working_dir into Python globals so code can reference it
             let wd_py = working_dir.to_pyobject(vm);
@@ -95,10 +116,36 @@ fn run_python_code(code: &str, working_dir: &str, allow_fs_access: bool) -> Resu
                 let _ = vm.write_exception(&mut buf, &e);
                 return Err(buf);
             }
+
+            // Inject safe open wrapper restricted to working directory
+            let safe_open_code = r#"
+import builtins
+import os
+_real_open = builtins.open
+_wd = os.path.abspath(__working_dir)
+if not _wd.endswith(os.sep):
+    _wd = _wd + os.sep
+def _safe_open(path, *args, **kwargs):
+    abs_path = os.path.abspath(path)
+    if not abs_path.startswith(_wd):
+        raise OSError("Access denied: path outside working directory")
+    return _real_open(path, *args, **kwargs)
+builtins.open = _safe_open
+"#;
+            match vm.compile(safe_open_code, vm::compiler::Mode::Exec, "<safe_open>".to_owned()) {
+                Ok(obj) => {
+                    if let Err(e) = vm.run_code_obj(obj, scope.clone()) {
+                        let mut buf = String::new();
+                        let _ = vm.write_exception(&mut buf, &e);
+                        return Err(format!("Safe open initialization error: {}", buf));
+                    }
+                }
+                Err(e) => return Err(format!("Safe open compilation error: {:?}", e)),
+            }
         } else {
-            // Sandbox: block filesystem access by replacing _io.FileIO and builtins.open,
+            // Sandbox: block filesystem access by replacing _io.FileIO, _io.open and builtins.open,
             // pre-loading random so it can capture os.urandom, then replacing random's os
-            // reference with a safe stub and blocking future os/nt/posix imports.
+            // reference with a safe stub and blocking future dangerous imports.
             let sandbox_code = r#"
 import sys
 import builtins
@@ -111,6 +158,7 @@ class _BlockedFileIO:
 _io_module = sys.modules.get('_io')
 if _io_module is not None:
     _io_module.FileIO = _BlockedFileIO
+    _io_module.open = _BlockedFileIO
 
 def _blocked_open(*args, **kwargs):
     raise OSError("Filesystem access is disabled in sandbox mode")
@@ -131,10 +179,16 @@ for _mod in ('os', 'nt', 'posix', 'os.path'):
     if _mod in sys.modules:
         del sys.modules[_mod]
 
-# Block future imports of os/nt/posix
+# Block future imports of dangerous modules
+_BLOCKED_MODULES = {
+    'os', 'nt', 'posix', 'os.path',
+    'subprocess', 'socket', 'urllib', 'urllib.request', 'urllib.parse',
+    'http.client', 'http', 'ctypes', 'platform',
+    'importlib', 'importlib.util', 'importlib.machinery',
+}
 class _SandboxFinder:
     def find_spec(self, fullname, path, target=None):
-        if fullname in ('os', 'nt', 'posix', 'os.path'):
+        if fullname in _BLOCKED_MODULES:
             raise ModuleNotFoundError("Module is disabled in sandbox mode")
         return None
 
@@ -150,6 +204,26 @@ sys.meta_path.insert(0, _SandboxFinder())
                 }
                 Err(e) => return Err(format!("Sandbox compilation error: {:?}", e)),
             }
+        }
+
+        // Inject trace for timeout-based termination
+        let trace_code = r#"
+import sys
+def _rust_timeout_tracer(frame, event, arg):
+    if _rust_check_timeout():
+        raise SystemExit("Execution timed out")
+    return _rust_timeout_tracer
+sys.settrace(_rust_timeout_tracer)
+"#;
+        match vm.compile(trace_code, vm::compiler::Mode::Exec, "<trace>".to_owned()) {
+            Ok(obj) => {
+                if let Err(e) = vm.run_code_obj(obj, scope.clone()) {
+                    let mut buf = String::new();
+                    let _ = vm.write_exception(&mut buf, &e);
+                    return Err(format!("Trace initialization error: {}", buf));
+                }
+            }
+            Err(e) => return Err(format!("Trace compilation error: {:?}", e)),
         }
 
         // 1. Redirect stdout/stderr to io.StringIO for capture
@@ -205,13 +279,13 @@ sys.meta_path.insert(0, _SandboxFinder())
 
         // 4. Try to get __result; fallback to auto-evaluating last line as expression
         let result_value = match scope.globals.get_item("__result", vm) {
-            Ok(obj) => python_obj_to_json(vm, obj),
+            Ok(obj) => python_obj_to_json(vm, obj, 0),
             Err(_) => {
                 let last_line = code
                     .lines()
                     .rev()
                     .map(|s| s.trim())
-                    .find(|s| !s.is_empty())
+                    .find(|s| !s.is_empty() && !s.starts_with('#'))
                     .unwrap_or("");
                 if !last_line.is_empty() {
                     let expr_code = format!("__result = ({})", last_line);
@@ -220,7 +294,7 @@ sys.meta_path.insert(0, _SandboxFinder())
                         Ok(expr_obj) => {
                             if vm.run_code_obj(expr_obj, scope.clone()).is_ok() {
                                 if let Ok(obj) = scope.globals.get_item("__result", vm) {
-                                    python_obj_to_json(vm, obj)
+                                    python_obj_to_json(vm, obj, 0)
                                 } else {
                                     stderr.push_str("\nNote: __result was not set. Assign the desired return value to __result.");
                                     Value::Null
@@ -246,9 +320,14 @@ sys.meta_path.insert(0, _SandboxFinder())
     })
 }
 
-fn python_obj_to_json(vm: &rustpython_vm::VirtualMachine, obj: rustpython_vm::PyObjectRef) -> Value {
+fn python_obj_to_json(vm: &rustpython_vm::VirtualMachine, obj: rustpython_vm::PyObjectRef, depth: usize) -> Value {
     use rustpython_vm::AsObject;
     use rustpython_vm::builtins::{PyBool, PyDict, PyFloat, PyInt, PyList, PyNone, PyStr};
+
+    const MAX_DEPTH: usize = 50;
+    if depth > MAX_DEPTH {
+        return Value::String("<max depth exceeded>".to_string());
+    }
 
     // None
     if obj.downcast_ref::<PyNone>().is_some() {
@@ -295,7 +374,7 @@ fn python_obj_to_json(vm: &rustpython_vm::VirtualMachine, obj: rustpython_vm::Py
         let arr: Vec<Value> = list
             .borrow_vec()
             .iter()
-            .map(|item| python_obj_to_json(vm, item.clone()))
+            .map(|item| python_obj_to_json(vm, item.clone(), depth + 1))
             .collect();
         return Value::Array(arr);
     }
@@ -309,7 +388,7 @@ fn python_obj_to_json(vm: &rustpython_vm::VirtualMachine, obj: rustpython_vm::Py
             } else {
                 continue;
             };
-            map.insert(key, python_obj_to_json(vm, value_obj));
+            map.insert(key, python_obj_to_json(vm, value_obj, depth + 1));
         }
         return Value::Object(map);
     }
