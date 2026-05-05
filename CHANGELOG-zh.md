@@ -7,6 +7,20 @@
 
 ## [Unreleased]
 
+### 新增功能
+- **自定义系统提示**：新增 `--system-prompt` CLI 参数和 `MCP_SYSTEM_PROMPT` 环境变量。自定义提示追加到 MCP `initialize` 的 instructions 中，可通过 WebUI（`GET/PUT /api/config`）查看和修改。
+- **`execute_command` 自定义 Shell 路径**：新增 `shell_path` 和 `shell_arg` 参数，支持指定自定义 shell 可执行文件（如 Windows 7 + VxKex 环境的 `C:\Tools\pwh.exe`）。智能参数推断：文件名含 "powershell"/"pwsh"/"pwh" 时用 `-Command`，否则 Windows 用 `/C`、Unix 用 `-c`。
+- **CLI Help 双语输出**：`--help` 同时输出英文和中文说明，利用 clap 的 `help_template` 和所有字段的双语 `help` 注释实现。
+
+### 变更
+- **工具预设重构**：重新设计已有的 6 种预设（`minimal`、`coding`、`document`、`data_analysis`、`system_admin`、`full_power`），每种预设现在同时控制 `execute_python` 文件系统访问状态。`minimal` 保持沙箱模式（fs=false）；`coding`/`data_analysis`/`system_admin`/`full_power` 启用文件系统访问。服务器默认启动时自动应用 `minimal` 预设，使用 `--preset none` 跳过。
+- **文档全面更新**：全部 10 个 markdown 文件（README、architecture、user-guide、security、API 及其中文版）已更新，反映基于预设的工具管理、新增 `system_prompt` 功能，并修正了工具数量。
+- **更新日志年份修正**：所有发布日期从 2024/2025 修正为 2026。
+
+### 修复
+- **WebUI 预设国际化**：预设按钮（`data_analysis`、`system_admin`）现在正确显示中文名称。"当前："标签现在显示翻译后的预设名而非英文。
+- **WebUI 毛玻璃闪烁**：修复了在模态遮罩层或侧边栏上移动鼠标时背景不断闪烁的问题。移除了 `.modal` 和 `.modal-content` 上冲突的 `transform: translateZ(0)` / `will-change`，改为 `contain: layout paint` 隔离渲染层。优化 `bindCardTilt` 使用 `requestAnimationFrame` 批量更新 transform。
+
 ## [0.3.0] - 2026-05-05
 
 ### 新增功能

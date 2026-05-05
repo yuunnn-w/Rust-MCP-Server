@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Custom System Prompt**: New `--system-prompt` CLI flag and `MCP_SYSTEM_PROMPT` environment variable. Custom prompt is appended to MCP `initialize` instructions and can be updated via WebUI (`GET/PUT /api/config`).
+- **Custom Shell Path for `execute_command`**: New `shell_path` and `shell_arg` parameters allow specifying custom shell executables (e.g., `C:\Tools\pwh.exe` for Windows 7 + VxKex environments). Smart argument inference: filenames containing "powershell"/"pwsh"/"pwh" use `-Command`, otherwise Windows uses `/C` and Unix uses `-c`.
+- **Bilingual CLI Help**: `--help` output now displays both English and Chinese descriptions using clap's `help_template` and bilingual `help` annotations.
+
+### Changed
+- **Tool Presets overhaul**: Redesigned the 6 existing presets (`minimal`, `coding`, `document`, `data_analysis`, `system_admin`, `full_power`) so each preset now also controls `execute_python` filesystem access state. `minimal` keeps `execute_python` sandboxed (fs=false); `coding`/`data_analysis`/`system_admin`/`full_power` enable fs access. Server auto-applies the `minimal` preset on startup by default. Use `--preset none` to skip.
+- **Documentation overhaul**: All 10 markdown files (README, architecture, user-guide, security, API, and Chinese versions) updated to reflect preset-based tool management, new `system_prompt` feature, and corrected tool counts.
+- **Changelog year correction**: All release dates corrected from 2024/2025 to 2026.
+
+### Fixed
+- **WebUI preset i18n**: Preset buttons (`data_analysis`, `system_admin`) now correctly display Chinese names. The "Current: " label now shows translated preset names instead of English.
+- **WebUI glassmorphism flickering**: Fixed backdrop-filter flickering when moving mouse over modal overlays or sidebar. Removed conflicting `transform: translateZ(0)` / `will-change` from `.modal` and `.modal-content`, replaced with `contain: layout paint`. Optimized `bindCardTilt` to use `requestAnimationFrame` for batched transform updates.
+
 ## [0.3.0] - 2026-05-05
 
 ### Added
