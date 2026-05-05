@@ -14,7 +14,8 @@ use rmcp::transport::streamable_http_server::{
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tower_http::cors::{Any, CorsLayer};
-use tracing::{info, warn};
+use sysinfo::Networks;
+use tracing::info;
 
 /// Build Streamable HTTP server config from AppConfig
 /// http mode: stateless + json response
@@ -57,18 +58,13 @@ fn build_streamable_config(config: &AppConfig, ct: tokio_util::sync::Cancellatio
         // 0.0.0.0 listens on all interfaces; we need to discover actual local IPs
         // because clients will send Host headers with the specific IP they connect to.
         info!("mcp_host is 0.0.0.0, auto-detecting network interface IPs for allowed_hosts");
-        match get_if_addrs::get_if_addrs() {
-            Ok(ifaces) => {
-                for iface in ifaces {
-                    let ip_str = iface.ip().to_string();
-                    if !allowed_hosts.contains(&ip_str) {
-                        allowed_hosts.push(ip_str);
-                    }
+        let networks = Networks::new_with_refreshed_list();
+        for (_, data) in &networks {
+            for ip_network in data.ip_networks() {
+                let ip_str = ip_network.addr.to_string();
+                if !allowed_hosts.contains(&ip_str) {
+                    allowed_hosts.push(ip_str);
                 }
-            }
-            Err(e) => {
-                warn!("Failed to auto-detect network interfaces: {}. Falling back to disable allowed_hosts.", e);
-                return base_config.disable_allowed_hosts();
             }
         }
     } else {

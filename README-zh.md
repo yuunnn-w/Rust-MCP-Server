@@ -80,7 +80,7 @@ Rust MCP Server 是一个使用 Rust 构建的高性能 [模型上下文协议 (
 |------|-------------|----------|
 | `execute_command` | 执行带安全检查的 shell 命令，支持指定解释器和自定义 shell 路径 | 禁用 |
 | `process_list` | 列出系统进程 | 禁用 |
-| `system_info` | 获取系统信息 | 禁用 |
+| `system_info` | 获取全面的系统信息（操作系统、CPU、内存、交换空间、磁盘、网络、温度） | 禁用 |
 | `http_request` | 发起 HTTP GET/POST/PUT/DELETE/PATCH/HEAD 请求 | 禁用 |
 | `git_ops` | 运行 git 命令（status、diff、log、branch、show） | 启用 |
 | `env_get` | 获取环境变量值 | 启用 |

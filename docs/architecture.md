@@ -116,7 +116,7 @@ Implements the Model Context Protocol using the `rmcp` crate.
 | Tool | Description | Dangerous | Working Dir Restriction |
 |------|-------------|-----------|------------------------|
 | `process_list` | List system processes | No | No |
-| `system_info` | Get system information | No | No |
+| `system_info` | Get comprehensive system information including OS, CPU, memory, swap, disks, network interfaces, and hardware temperature | No | No |
 | `execute_command` | Execute shell command in specified directory | Yes | Yes |
 | `execute_python` | Execute Python code. All Python standard library modules are available. Filesystem access is toggleable via WebUI. | No | Yes (when fs access enabled) |
 

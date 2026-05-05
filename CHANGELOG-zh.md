@@ -11,11 +11,22 @@
 - **自定义系统提示**：新增 `--system-prompt` CLI 参数和 `MCP_SYSTEM_PROMPT` 环境变量。自定义提示追加到 MCP `initialize` 的 instructions 中，可通过 WebUI（`GET/PUT /api/config`）查看和修改。
 - **`execute_command` 自定义 Shell 路径**：新增 `shell_path` 和 `shell_arg` 参数，支持指定自定义 shell 可执行文件（如 Windows 7 + VxKex 环境的 `C:\Tools\pwh.exe`）。智能参数推断：文件名含 "powershell"/"pwsh"/"pwh" 时用 `-Command`，否则 Windows 用 `/C`、Unix 用 `-c`。
 - **CLI Help 双语输出**：`--help` 同时输出英文和中文说明，利用 clap 的 `help_template` 和所有字段的双语 `help` 注释实现。
+- **升级 `sysinfo` 至 0.38.4**：从 0.33 升级至 0.38.4，解锁更多系统信息 API。
+- **`system_info` 工具全面增强**：大幅扩展 `system_info` 工具返回的信息：
+  - **磁盘信息**：名称、挂载点、文件系统类型（HDD/SSD）、总/可用容量（GB）、使用率、是否可移动/只读
+  - **网络接口**：名称、MAC 地址、IP 地址（CIDR）、MTU、总接收/发送量（MB）
+  - **硬件温度**：组件标签、当前/最高/临界温度（°C，平台支持时）
+  - **交换空间**：总/已用/空闲交换空间（MB）及使用率
+  - **CPU 详情**：架构、频率（MHz）、物理核心数
+  - **系统详情**：启动时间（Unix 时间戳）、详细 OS 版本、发行版 ID
+- **移除 `get_if_addrs` 依赖**：`allowed_hosts` 的网卡 IP 自动检测现在使用 `sysinfo::Networks` 替代 `get_if_addrs`，减少外部依赖。
 
 ### 变更
 - **工具预设重构**：重新设计已有的 6 种预设（`minimal`、`coding`、`document`、`data_analysis`、`system_admin`、`full_power`），每种预设现在同时控制 `execute_python` 文件系统访问状态。`minimal` 保持沙箱模式（fs=false）；`coding`/`data_analysis`/`system_admin`/`full_power` 启用文件系统访问。服务器默认启动时自动应用 `minimal` 预设，使用 `--preset none` 跳过。
 - **文档全面更新**：全部 10 个 markdown 文件（README、architecture、user-guide、security、API 及其中文版）已更新，反映基于预设的工具管理、新增 `system_prompt` 功能，并修正了工具数量。
 - **更新日志年份修正**：所有发布日期从 2024/2025 修正为 2026。
+- **`system_info` 内存单位修正**：内存字段（`memory_total_mb`、`memory_used_mb`、`memory_free_mb`、`swap_total_mb` 等）现在正确通过除以 `1024 * 1024` 将 bytes 转换为 MB（此前仅除以 1024，导致数值实际为 KB 却标注为 MB）。
+- **`system_info` 数值精度**：所有浮点数值（CPU 使用率、内存使用率、交换空间使用率、磁盘使用率、温度等）现在统一保留两位小数，输出更加规范。
 
 ### 修复
 - **WebUI 预设国际化**：预设按钮（`data_analysis`、`system_admin`）现在正确显示中文名称。"当前："标签现在显示翻译后的预设名而非英文。

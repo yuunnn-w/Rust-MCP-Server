@@ -80,7 +80,7 @@ The following write operations are **restricted** to the working directory:
 |------|-------------|----------------|
 | `execute_command` | Execute shell commands with safety checks, shell selection, and custom shell path support | Disabled |
 | `process_list` | List system processes | Disabled |
-| `system_info` | Get system information | Disabled |
+| `system_info` | Get comprehensive system information (OS, CPU, memory, swap, disks, network, temperature) | Disabled |
 | `http_request` | Make HTTP GET/POST requests | Disabled |
 | `git_ops` | Run git commands (status, diff, log, branch, show) | Enabled |
 | `env_get` | Get environment variable values | Enabled |

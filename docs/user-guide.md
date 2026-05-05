@@ -390,13 +390,20 @@ List system processes.
 - Sorted by CPU usage (descending)
 
 #### system_info
-Get system information.
+Get comprehensive system information.
 
 **Returns:**
-- OS name and version
-- CPU count and architecture
-- Memory information
-- Hostname
+- OS name, version, detailed version, distribution ID, kernel version, hostname
+- CPU architecture, logical count, physical core count, brand, frequency (MHz), usage (%)
+- Memory: total, used, free (MB), usage (%)
+- Swap: total, used, free (MB), usage (%)
+- System uptime (seconds), boot time (Unix timestamp)
+- Load average (1min, 5min, 15min) — Unix only
+- Disks: name, mount point, file system, type (HDD/SSD), total/available (GB), usage (%), removable, read-only
+- Network interfaces: name, MAC address, IP addresses (CIDR), MTU, total received/transmitted (MB)
+- Hardware temperature: component label, current/max/critical temperature (°C) where available
+
+All floating-point values are rounded to 2 decimal places.
 
 ### Utility Tools
 

@@ -249,7 +249,7 @@ RUST_LOG=debug ./rust-mcp-server
 - `hash_compute` - 哈希计算（不受工作目录限制）
 - `http_request` - HTTP 请求（具备 SSRF 防护）
 - `image_read` - 图像读取（不受工作目录限制）
-- `system_info` - 系统信息
+- `system_info` - 全面系统信息（操作系统、CPU、内存、磁盘、网络接口、温度）
 - `file_stat` - 文件/目录元数据（不受工作目录限制）
 - `path_exists` - 路径存在性检查（不受工作目录限制）
 - `json_query` - JSON 文件查询（不受工作目录限制）

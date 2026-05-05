@@ -249,7 +249,7 @@ These tools are generally safe (read-only or non-destructive). The `minimal` pre
 - `hash_compute` - Hash calculation (no working directory restriction)
 - `http_request` - HTTP requests (with SSRF protection)
 - `image_read` - Image reading (no working directory restriction)
-- `system_info` - System information
+- `system_info` - Comprehensive system information (OS, CPU, memory, disks, network interfaces, temperature)
 - `file_stat` - File/directory metadata (no working directory restriction)
 - `path_exists` - Path existence check (no working directory restriction)
 - `json_query` - JSON file querying (no working directory restriction)

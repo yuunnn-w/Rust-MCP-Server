@@ -11,11 +11,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Custom System Prompt**: New `--system-prompt` CLI flag and `MCP_SYSTEM_PROMPT` environment variable. Custom prompt is appended to MCP `initialize` instructions and can be updated via WebUI (`GET/PUT /api/config`).
 - **Custom Shell Path for `execute_command`**: New `shell_path` and `shell_arg` parameters allow specifying custom shell executables (e.g., `C:\Tools\pwh.exe` for Windows 7 + VxKex environments). Smart argument inference: filenames containing "powershell"/"pwsh"/"pwh" use `-Command`, otherwise Windows uses `/C` and Unix uses `-c`.
 - **Bilingual CLI Help**: `--help` output now displays both English and Chinese descriptions using clap's `help_template` and bilingual `help` annotations.
+- **Upgraded `sysinfo` to 0.38.4**: Upgraded from 0.33 to 0.38.4, unlocking new system information APIs.
+- **`system_info` tool overhaul**: Significantly expanded the information returned by the `system_info` tool:
+  - **Disk information**: Name, mount point, file system type (HDD/SSD), total/available capacity (GB), usage percentage, removable/read-only status
+  - **Network interfaces**: Name, MAC address, IP addresses (CIDR), MTU, total received/transmitted (MB)
+  - **Hardware temperature**: Component label, current/max/critical temperature (°C) where available
+  - **Swap memory**: Total/used/free swap (MB) and usage percentage
+  - **CPU details**: Architecture, frequency (MHz), physical core count
+  - **System details**: Boot time (Unix timestamp), long OS version, distribution ID
+- **Removed `get_if_addrs` dependency**: Network interface IP auto-detection for `allowed_hosts` now uses `sysinfo::Networks` instead of `get_if_addrs`, reducing external dependencies.
 
 ### Changed
 - **Tool Presets overhaul**: Redesigned the 6 existing presets (`minimal`, `coding`, `document`, `data_analysis`, `system_admin`, `full_power`) so each preset now also controls `execute_python` filesystem access state. `minimal` keeps `execute_python` sandboxed (fs=false); `coding`/`data_analysis`/`system_admin`/`full_power` enable fs access. Server auto-applies the `minimal` preset on startup by default. Use `--preset none` to skip.
 - **Documentation overhaul**: All 10 markdown files (README, architecture, user-guide, security, API, and Chinese versions) updated to reflect preset-based tool management, new `system_prompt` feature, and corrected tool counts.
 - **Changelog year correction**: All release dates corrected from 2024/2025 to 2026.
+- **`system_info` memory units corrected**: Memory fields (`memory_total_mb`, `memory_used_mb`, `memory_free_mb`, `swap_total_mb`, etc.) now correctly convert from bytes to MB by dividing by `1024 * 1024` (previously only divided by 1024, resulting in KB values labeled as MB).
+- **`system_info` numeric precision**: All floating-point values (CPU usage, memory usage, swap usage, disk usage, temperature, etc.) now rounded to 2 decimal places for consistent output.
 
 ### Fixed
 - **WebUI preset i18n**: Preset buttons (`data_analysis`, `system_admin`) now correctly display Chinese names. The "Current: " label now shows translated preset names instead of English.

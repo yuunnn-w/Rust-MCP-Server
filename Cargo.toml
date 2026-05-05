@@ -55,8 +55,7 @@ sha2 = "0.10"
 md-5 = "0.10"
 
 # System info
-sysinfo = "0.33"
-get_if_addrs = "0.5"
+sysinfo = "0.38"
 
 # Error handling
 anyhow = "1.0"
