@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.3.0] - 2025-05-05
+## [0.3.0] - 2026-05-05
 
 ### Added
 - **New tool `execute_python`**: Execute Python code in a RustPython interpreter with local filesystem access. Supports stdout/stderr capture, timeout control (1-30s), automatic last-line expression evaluation, and `__working_dir` injection. Filesystem access is disabled by default (sandboxed); the tool itself is safe and enabled by default.
@@ -61,7 +61,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Updated tool descriptions for improved clarity and consistency.
 - `execute_python` description in `list_tools()` no longer overridden; full detailed module description is preserved.
 
-## [0.2.0] - 2024-04-22
+## [0.2.0] - 2026-04-22
 
 ### Added
 - **About dialog in WebUI**: New "About" button and modal displaying software version, description, authors, and GitHub repository link
@@ -94,7 +94,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Removed
 - Standalone `base64_encode` and `base64_decode` tools (replaced by unified `base64_codec`)
 
-## [0.1.0] - 2024-03-15
+## [0.1.0] - 2026-03-15
 
 ### Added
 - Initial release of Rust MCP Server
