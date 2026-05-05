@@ -30,6 +30,42 @@ Get all tools with their current status.
       "is_calling": false,
       "is_busy": false,
       "is_dangerous": true
+    },
+    {
+      "name": "clipboard",
+      "description": "Read or write system clipboard content (text or image)",
+      "enabled": true,
+      "call_count": 0,
+      "is_calling": false,
+      "is_busy": false,
+      "is_dangerous": false
+    },
+    {
+      "name": "archive",
+      "description": "Create, extract, list, or append ZIP archives",
+      "enabled": false,
+      "call_count": 0,
+      "is_calling": false,
+      "is_busy": false,
+      "is_dangerous": true
+    },
+    {
+      "name": "diff",
+      "description": "Compare text, files, or directories with multiple output formats",
+      "enabled": true,
+      "call_count": 0,
+      "is_calling": false,
+      "is_busy": false,
+      "is_dangerous": false
+    },
+    {
+      "name": "note_storage",
+      "description": "In-memory temporary scratchpad for AI short-term memory",
+      "enabled": true,
+      "call_count": 0,
+      "is_calling": false,
+      "is_busy": false,
+      "is_dangerous": false
     }
   ]
 }
@@ -98,6 +134,98 @@ Enable or disable a tool.
 }
 ```
 
+#### POST /api/tools/batch-enable
+Enable or disable multiple tools at once.
+
+**Request:**
+```json
+{
+  "tools": ["file_read", "file_write", "execute_command"],
+  "enabled": true
+}
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "enabled": true,
+  "changed": ["file_read", "file_write", "execute_command"],
+  "failed": []
+}
+```
+
+### Tool Presets
+
+#### GET /api/tool-presets
+Get all available tool presets.
+
+**Response:**
+```json
+[
+  {
+    "name": "minimal",
+    "description": "Minimal safe mode",
+    "tool_count": 16
+  },
+  {
+    "name": "coding",
+    "description": "Coding & development",
+    "tool_count": 23
+  },
+  {
+    "name": "document",
+    "description": "Document processing",
+    "tool_count": 16
+  },
+  {
+    "name": "data_analysis",
+    "description": "Data analysis",
+    "tool_count": 18
+  },
+  {
+    "name": "system_admin",
+    "description": "System administration",
+    "tool_count": 20
+  },
+  {
+    "name": "full_power",
+    "description": "All tools enabled",
+    "tool_count": 25
+  }
+]
+```
+
+#### GET /api/tool-presets/current
+Get the currently active preset name.
+
+**Response:**
+```json
+{
+  "success": true,
+  "preset": "coding"
+}
+```
+
+#### POST /api/tool-presets/apply/{name}
+Apply a tool preset. This atomically enables/disables tools according to the preset configuration.
+
+**Response:**
+```json
+{
+  "success": true,
+  "preset": "coding"
+}
+```
+
+**Available presets:**
+- `minimal`: Safe read-only tools + sandboxed Python (16 tools, `execute_python` fs=false)
+- `coding`: Development-focused tools including file editing and command execution (23 tools, `execute_python` fs=true)
+- `document`: Document processing tools including file writing and clipboard (16 tools, `execute_python` fs=false)
+- `data_analysis`: Data analysis tools including calculator, Python, and diff (18 tools, `execute_python` fs=true)
+- `system_admin`: System administration tools including system info, process list, and command execution (20 tools, `execute_python` fs=true)
+- `full_power`: All 25 tools enabled (`execute_python` fs=true)
+
 ### Server Status
 
 #### GET /api/status
@@ -135,7 +263,8 @@ Get current server configuration.
   "mcp_port": 3344,
   "max_concurrency": 10,
   "working_dir": ".",
-  "log_level": "info"
+  "log_level": "info",
+  "system_prompt": null
 }
 ```
 
@@ -167,6 +296,8 @@ Update configuration (limited options).
 - `mcp_port`
 - `max_concurrency` (range: 1-1000)
 - `working_dir`
+- `log_level`
+- `system_prompt`
 - `log_level` (`"trace"`, `"debug"`, `"info"`, `"warn"`, `"error"`)
 
 **Note:** Changes to `mcp_transport`, `mcp_host`, `mcp_port`, `webui_host`, `webui_port`, `log_level`, or `working_dir` require a server restart to take full effect. The response will include `restart_required: true` when this is the case.
@@ -286,7 +417,7 @@ Get server version and metadata.
 ```json
 {
   "name": "rust-mcp-server",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "A high-performance MCP server with WebUI control panel",
   "authors": "MCP Server Team",
   "repository": "https://github.com/yuunnn-w/Rust-MCP-Server",

@@ -7,10 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0] - 2025-05-05
+
 ### Added
-- New tool `execute_python`: Execute Python code in a RustPython interpreter with local filesystem access. Supports stdout/stderr capture, timeout control (1-30s), automatic last-line expression evaluation, and `__working_dir` injection. Filesystem access is disabled by default (sandboxed); the tool itself is safe and enabled by default.
+- **New tool `execute_python`**: Execute Python code in a RustPython interpreter with local filesystem access. Supports stdout/stderr capture, timeout control (1-30s), automatic last-line expression evaluation, and `__working_dir` injection. Filesystem access is disabled by default (sandboxed); the tool itself is safe and enabled by default.
 - **Full Python standard library support**: Enabled `host_env` and `ssl-rustls` features in `rustpython-stdlib`, making network modules (`socket`, `urllib`, `http`, `ssl`) available in both sandbox and filesystem modes.
 - **Embedded HTTP helper**: `urllib`-based HTTP requests now work inside the Python interpreter without external dependencies.
+- **4 New Tools** (total 25):
+  - `clipboard`: Cross-platform clipboard operations (`read_text`, `write_text`, `read_image`, `clear`) via `arboard`
+  - `archive`: ZIP archive operations (`create`, `extract`, `list`, `append`) with configurable compression level via `zip`
+  - `diff`: Advanced diff tool with 4 modes (`compare_text`, `compare_files`, `directory_diff`, `git_diff_file`) and 4 output formats (`unified`, `side_by_side`, `summary`, `inline`) via `similar`
+  - `note_storage`: In-memory temporary scratchpad for AI short-term memory with auto-expiry after 30 minutes of inactivity. Supports `create`, `list`, `read`, `update`, `delete`, `append`, `search`
+- **Tool Presets**: 6 predefined tool configurations (`minimal`, `coding`, `document`, `data_analysis`, `system_admin`, `full_power`) for one-click tool enablement
+  - New REST APIs: `GET /api/tool-presets`, `GET /api/tool-presets/current`, `POST /api/tool-presets/apply/{name}`
+  - Preset UI in WebUI sidebar with active preset indicator
+- **Batch Tool Enable**: `POST /api/tools/batch-enable` to enable/disable multiple tools at once
+  - WebUI sidebar buttons for "Enable All" and "Disable All"
+- **In-Memory Notes System**: Temporary note storage integrated into `ServerState` with 30-minute auto-cleanup
+- New dependencies: `arboard = "3.6"`, `zip = "8.6"`, `similar = "3.1"`
 
 ### Security
 - `execute_python` runs in sandbox mode by default (filesystem access disabled). It is classified as a safe tool and enabled by default. Filesystem access can be enabled with caution via WebUI.
@@ -21,6 +35,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Hash streaming**: Large file hashing now uses 8KB chunked reads instead of loading entire files into memory, preventing OOM on multi-gigabyte files.
 - **File size limits**: Added 100MB content limit for `file_write` and 50MB limit for `image_read`.
 - **Sensitive data filtering**: `env_get` now blacklists variables containing `SECRET`, `PASSWORD`, `TOKEN`, or `KEY`.
+- `archive` tool validates all paths against `working_dir` using `ensure_path_within_working_dir`
+- `diff` tool's `compare_files` and `directory_diff` modes are restricted to `working_dir`
+- `note_storage` data is purely ephemeral (memory-only) and automatically cleared after 30 minutes of inactivity
 
 ### Fixed
 - **Crash fixes**: Fixed UTF-8 truncation panics in `json_query`, `file_read` (highlight_line), `http_request`, and `execute_command` by using `char_indices()` safe boundary detection.
@@ -39,6 +56,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `system_info` now reports `available_memory()` instead of `free_memory()` for more accurate memory usage metrics.
 - `process_list` memory units corrected from KB to MB.
 - `dir_list` sort by `size`/`modified` now uses pre-cached metadata to avoid repeated stat syscalls.
+- Default `working_dir` `"."` is now automatically resolved to the actual current working directory at startup.
+- `default_disable_tools` now includes `archive`.
+- Updated tool descriptions for improved clarity and consistency.
+- `execute_python` description in `list_tools()` no longer overridden; full detailed module description is preserved.
 
 ## [0.2.0] - 2024-04-22
 

@@ -1,6 +1,9 @@
+pub mod archive;
 pub mod base64_codec;
 pub mod calculator;
+pub mod clipboard;
 pub mod datetime;
+pub mod diff;
 pub mod dir_list;
 pub mod env_get;
 pub mod execute_python;
@@ -16,6 +19,7 @@ pub mod hash_computer;
 pub mod http_request;
 pub mod image_read;
 pub mod json_query;
+pub mod note_storage;
 pub mod path_exists;
 pub mod process_list;
 pub mod system_info;
@@ -126,6 +130,26 @@ pub fn get_all_tools() -> Vec<(String, String, bool)> {
         (
             "execute_python".to_string(),
             "Execute Python code in a sandboxed environment for calculations, data processing, and logic evaluation. By default, filesystem access is disabled (safe). Set __result for return value. Available standard library modules: math, random, statistics, datetime, itertools, functools, collections, re, string, json, fractions, decimal, typing, hashlib, base64, bisect, heapq, copy, pprint, enum, types, dataclasses, inspect, sys.".to_string(),
+            false,
+        ),
+        (
+            "clipboard".to_string(),
+            "Read or write system clipboard content (text or image). Cross-platform support for Windows, Linux, and macOS.".to_string(),
+            false,
+        ),
+        (
+            "archive".to_string(),
+            "Create, extract, list, or append ZIP archives. Supports deflate and zstd compression. Restricted to working directory.".to_string(),
+            true,
+        ),
+        (
+            "diff".to_string(),
+            "Compare text, files, or directories with unified diff, side-by-side, summary, or inline word-level output. Supports git HEAD comparison.".to_string(),
+            false,
+        ),
+        (
+            "note_storage".to_string(),
+            "The AI assistant's short-term memory scratchpad. Use it to temporarily store intermediate results, task sub-steps, context snippets, or working hypotheses during the current conversation or task. Notes are stored only in memory and are automatically erased if not used for 30 minutes. Do not use this for long-term persistence—use it as a thinking workspace to offload complex reasoning or maintain state across multiple tool calls within a session.".to_string(),
             false,
         ),
     ]

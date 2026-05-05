@@ -1,3 +1,4 @@
+use crate::mcp::presets::get_all_presets;
 use crate::mcp::state::ServerState;
 
 use axum::{
@@ -81,6 +82,7 @@ pub struct ConfigResponse {
     pub max_concurrency: usize,
     pub working_dir: String,
     pub log_level: String,
+    pub system_prompt: Option<String>,
 }
 
 /// Enable/disable tool request
@@ -106,6 +108,22 @@ pub struct UpdateConfigRequest {
     pub webui_port: Option<u16>,
     pub log_level: Option<String>,
     pub working_dir: Option<String>,
+    pub system_prompt: Option<String>,
+}
+
+/// Batch enable/disable tools request
+#[derive(Debug, Deserialize)]
+pub struct BatchEnableToolsRequest {
+    pub tools: Vec<String>,
+    pub enabled: bool,
+}
+
+/// Preset list response item
+#[derive(Debug, Serialize)]
+pub struct PresetResponse {
+    pub name: String,
+    pub description: String,
+    pub tool_count: usize,
 }
 
 /// Get all tools status
@@ -239,6 +257,7 @@ pub async fn set_python_fs_access(
 /// Get current configuration
 pub async fn get_config(State(state): State<Arc<ServerState>>) -> Json<ConfigResponse> {
     let config = state.config.read().await;
+    let system_prompt = state.get_system_prompt_sync();
     Json(ConfigResponse {
         webui_host: config.webui_host.clone(),
         webui_port: config.webui_port,
@@ -248,6 +267,7 @@ pub async fn get_config(State(state): State<Arc<ServerState>>) -> Json<ConfigRes
         max_concurrency: config.max_concurrency,
         working_dir: config.working_dir.to_string_lossy().to_string(),
         log_level: config.log_level.clone(),
+        system_prompt,
     })
 }
 
@@ -340,7 +360,19 @@ pub async fn update_config(
         }
     }
 
+    let mut system_prompt_updated = None;
+    if let Some(system_prompt) = request.system_prompt {
+        config.system_prompt = Some(system_prompt.clone());
+        system_prompt_updated = Some(system_prompt.clone());
+        changes.push(format!("system_prompt: {}", system_prompt));
+    }
+
     drop(config); // Release lock before side effects
+
+    // Apply side effects outside the lock
+    if let Some(prompt) = system_prompt_updated {
+        state.set_system_prompt(Some(prompt));
+    }
 
     // Apply side effects outside the lock
     if let Some(max_concurrency) = max_concurrency_updated {
@@ -532,8 +564,8 @@ Example: {}"#.to_string(),
 Parameters: path, optional mode (full/metadata, default: full)
 Example: {"path": "image.png", "mode": "metadata"}"#.to_string(),
         "execute_command" => r#"Usage: Execute a shell command (disabled by default).
-Parameters: command, optional cwd, optional timeout, optional shell (cmd/powershell/pwsh on Windows; sh/bash/zsh on Unix)
-Example: {"command": "ls -la", "cwd": "/home/user"}"#.to_string(),
+Parameters: command, optional cwd, optional timeout, optional shell (cmd/powershell/pwsh on Windows; sh/bash/zsh on Unix), optional shell_path (custom executable path, e.g., C:\Tools\pwh.exe), optional shell_arg (custom argument, e.g., -Command, /C)
+Example: {"command": "ls -la", "cwd": "/home/user"} | {"command": "Get-Date", "shell_path": "C:\\Tools\\pwh.exe"}"#.to_string(),
         "process_list" => r#"Usage: List system processes.
 No parameters required.
 Example: {}"#.to_string(),
@@ -555,6 +587,19 @@ Parameters: code (Python code), optional timeout_ms (default: 5000, max: 30000)
 Set the variable __result to return a value. If not set, the last line is automatically evaluated as an expression.
 The global variable __working_dir contains the server working directory.
 Example: {"code": "import math\n__result = math.pi * 2"}"#.to_string(),
+        "clipboard" => r#"Usage: Read or write system clipboard content.
+Parameters: operation (read_text/write_text/read_image/clear), optional text (required for write_text)
+Example: {"operation": "read_text"} | {"operation": "write_text", "text": "Hello"} | {"operation": "clear"}"#.to_string(),
+        "archive" => r#"Usage: Create, extract, list, or append ZIP archives.
+Parameters: operation (create/extract/list/append), archive_path, optional source_paths (for create/append), optional destination (for extract), optional compression_level 1-9 (default: 6)
+Example: {"operation": "create", "archive_path": "backup.zip", "source_paths": ["src", "Cargo.toml"]} | {"operation": "extract", "archive_path": "backup.zip", "destination": "./extracted"}"#.to_string(),
+        "diff" => r#"Usage: Compare text, files, or directories.
+Parameters: operation (compare_text/compare_files/directory_diff/git_diff_file), optional old_text/new_text (for compare_text), optional old_path/new_path (for compare_files/directory_diff), optional file_path (for git_diff_file), optional output_format (unified/side_by_side/summary/inline, default: unified), optional context_lines (default: 3), optional ignore_whitespace (default: false), optional ignore_case (default: false), optional max_output_lines (default: 500), optional word_level (default: true)
+Example: {"operation": "compare_text", "old_text": "foo\nbar", "new_text": "foo\nbaz", "output_format": "unified"} | {"operation": "git_diff_file", "file_path": "src/main.rs"}"#.to_string(),
+        "note_storage" => r#"Usage: The AI assistant's short-term memory scratchpad.
+Parameters: operation (create/list/read/update/delete/search/append), optional id (for read/update/delete/append), optional title/content/tags/category (for create/update), optional tag_filter/category (for list), optional query (for search), optional append_content (for append)
+Notes are stored only in memory and automatically erased after 30 minutes of inactivity. Max 100 notes, max 50,000 chars per note.
+Example: {"operation": "create", "title": "User prefers dark mode", "content": "...", "tags": ["preference"], "category": "user_prefs"} | {"operation": "search", "query": "preference"}"#.to_string(),
         _ => "No usage information available.".to_string(),
     }
 }
@@ -608,4 +653,59 @@ pub async fn get_version() -> Json<VersionResponse> {
         repository: env!("CARGO_PKG_REPOSITORY").to_string(),
         license: env!("CARGO_PKG_LICENSE").to_string(),
     })
+}
+
+/// Get all tool presets
+pub async fn get_tool_presets() -> Json<Vec<PresetResponse>> {
+    let presets = get_all_presets()
+        .into_iter()
+        .map(|p| PresetResponse {
+            name: p.name,
+            description: p.description,
+            tool_count: p.tools_enabled.len(),
+        })
+        .collect();
+    Json(presets)
+}
+
+/// Apply a tool preset
+pub async fn apply_tool_preset(
+    State(state): State<Arc<ServerState>>,
+    Path(name): Path<String>,
+) -> Result<Json<serde_json::Value>, String> {
+    state.apply_preset(&name).await?;
+    Ok(Json(serde_json::json!({
+        "success": true,
+        "preset": name
+    })))
+}
+
+/// Get current active preset
+pub async fn get_current_preset(State(state): State<Arc<ServerState>>) -> Json<serde_json::Value> {
+    let preset = state.get_current_preset().await;
+    Json(serde_json::json!({
+        "success": true,
+        "preset": preset
+    }))
+}
+
+/// Batch enable/disable tools
+pub async fn batch_enable_tools(
+    State(state): State<Arc<ServerState>>,
+    Json(request): Json<BatchEnableToolsRequest>,
+) -> Result<Json<serde_json::Value>, String> {
+    let mut changed = Vec::new();
+    let mut failed = Vec::new();
+    for tool_name in &request.tools {
+        match state.set_tool_enabled(tool_name, request.enabled).await {
+            Ok(()) => changed.push(tool_name.clone()),
+            Err(e) => failed.push((tool_name.clone(), e)),
+        }
+    }
+    Ok(Json(serde_json::json!({
+        "success": true,
+        "enabled": request.enabled,
+        "changed": changed,
+        "failed": failed
+    })))
 }

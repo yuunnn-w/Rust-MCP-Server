@@ -1,6 +1,6 @@
 [package]
 name = "rust-mcp-server"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2021"
 authors = ["小阳uni - yuunnn_w"]
 description = "A high-performance MCP server with WebUI control panel"
@@ -72,6 +72,15 @@ url = "2.5"
 tokio-stream = "0.1"
 futures = "0.3"
 async-stream = "0.3"
+
+# Clipboard (cross-platform)
+arboard = "3.6"
+
+# ZIP archive
+zip = { version = "8.6", default-features = false, features = ["deflate", "time", "zstd"] }
+
+# Diff algorithms
+similar = { version = "3.1", default-features = false, features = ["text", "inline"] }
 
 # Python sandbox execution
 rustpython-vm = { version = "0.5.0", default-features = false, features = ["compiler", "gc", "freeze-stdlib", "host_env", "stdio"] }

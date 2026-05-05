@@ -67,12 +67,30 @@ The WebUI provides a Cyberpunk AI Command Center:
 
 ### Enabling/Disabling Tools
 
-**Important:** By default, 11 tools are enabled for security: `calculator`, `dir_list`, `file_read`, `file_search`, `image_read`, `file_stat`, `path_exists`, `json_query`, `git_ops`, `env_get`, and `execute_python`. Dangerous tools (`execute_command`, `file_write`, `file_ops`, `file_edit`) are disabled by default.
+**Important:** The server starts with the `minimal` preset by default, which enables 15 safe tools including `execute_python` (sandboxed, no filesystem access). You can switch presets via the WebUI sidebar or the `--preset` CLI option. Individual tools can still be toggled independently.
 
 1. Open WebUI at `http://127.0.0.1:2233`
 2. Find the tool card in the grid
 3. Toggle the switch on the tool card
 4. Changes take effect immediately (no restart needed)
+
+### Tool Presets
+
+The sidebar provides **Tool Presets** for one-click configuration:
+- **minimal**: Safe read-only tools + sandboxed Python (16 tools, `execute_python` fs=false)
+- **coding**: Development-focused tools including file editing and command execution (23 tools, `execute_python` fs=true)
+- **document**: Document processing tools including file writing and clipboard (16 tools, `execute_python` fs=false)
+- **data_analysis**: Data analysis tools including calculator, Python, and diff (18 tools, `execute_python` fs=true)
+- **system_admin**: System administration tools including system info, process list, and command execution (20 tools, `execute_python` fs=true)
+- **full_power**: All 25 tools enabled (`execute_python` fs=true)
+
+Click any preset button in the sidebar to apply it. The currently active preset is displayed above the preset grid.
+
+### Batch Actions
+
+Use the **Batch Actions** buttons in the sidebar to quickly:
+- **Enable All**: Enable all tools at once
+- **Disable All**: Disable all tools at once
 
 ### Viewing Tool Statistics
 
@@ -449,6 +467,83 @@ Compute hash of string or file. File hashing uses streaming 8KB chunked reads to
   "input": "Hello, World!",
   "algorithm": "SHA256"
 }
+```
+
+### Clipboard & Archive Tools
+
+#### clipboard
+Read or write system clipboard content. Supports text and image operations.
+
+**Parameters:**
+- `operation` (string): `"read_text"`, `"write_text"`, `"read_image"`, or `"clear"`
+- `text` (string, optional): Text to write (required for `write_text`)
+
+**Example:**
+```json
+{"operation": "read_text"}
+{"operation": "write_text", "text": "Hello, World!"}
+{"operation": "clear"}
+```
+
+#### archive
+Create, extract, list, or append ZIP archives. All paths are restricted to the working directory.
+
+**Parameters:**
+- `operation` (string): `"create"`, `"extract"`, `"list"`, or `"append"`
+- `archive_path` (string): Path to the ZIP archive
+- `source_paths` (array, optional): Files/directories to include (for `create`/`append`)
+- `destination` (string, optional): Extract destination (for `extract`, defaults to working directory)
+- `compression_level` (number, optional): 1-9 (default: 6, only for `create`)
+
+**Example:**
+```json
+{"operation": "create", "archive_path": "backup.zip", "source_paths": ["src", "Cargo.toml"]}
+{"operation": "extract", "archive_path": "backup.zip", "destination": "./extracted"}
+{"operation": "list", "archive_path": "backup.zip"}
+```
+
+### Diff & Note Tools
+
+#### diff
+Compare text, files, or directories with multiple output formats.
+
+**Parameters:**
+- `operation` (string): `"compare_text"`, `"compare_files"`, `"directory_diff"`, or `"git_diff_file"`
+- `old_text` / `new_text` (string, optional): For `compare_text`
+- `old_path` / `new_path` (string, optional): For `compare_files` / `directory_diff`
+- `file_path` (string, optional): For `git_diff_file` (compares working copy vs HEAD)
+- `output_format` (string, optional): `"unified"` (default), `"side_by_side"`, `"summary"`, or `"inline"`
+- `context_lines` (number, optional): 1-20 (default: 3)
+- `ignore_whitespace` (boolean, optional): Default false
+- `ignore_case` (boolean, optional): Default false
+- `max_output_lines` (number, optional): Default 500
+- `word_level` (boolean, optional): Enable word-level inline highlighting (default: true)
+
+**Example:**
+```json
+{"operation": "compare_text", "old_text": "foo\nbar", "new_text": "foo\nbaz", "output_format": "unified"}
+{"operation": "git_diff_file", "file_path": "src/main.rs"}
+```
+
+#### note_storage
+AI short-term memory scratchpad. Notes are stored only in memory and auto-cleared after 30 minutes of inactivity.
+
+**Limits:** Max 100 notes, 50,000 chars per note, 200 chars per title, 10 tags per note.
+
+**Parameters:**
+- `operation` (string): `"create"`, `"list"`, `"read"`, `"update"`, `"delete"`, `"search"`, or `"append"`
+- `id` (number, optional): Note ID (for `read`/`update`/`delete`/`append`)
+- `title` (string, optional): For `create`/`update`
+- `content` (string, optional): For `create`/`update`
+- `tags` (array, optional): For `create`/`update`
+- `category` (string, optional): For `create`/`update`/`list`
+- `query` (string, optional): For `search`
+- `append_content` (string, optional): For `append`
+
+**Example:**
+```json
+{"operation": "create", "title": "User prefers dark mode", "content": "...", "tags": ["preference"], "category": "user_prefs"}
+{"operation": "search", "query": "preference"}
 ```
 
 ### Image Tools

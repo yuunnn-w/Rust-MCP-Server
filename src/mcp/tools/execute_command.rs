@@ -35,6 +35,12 @@ pub struct ExecuteCommandParams {
     /// Shell to use. On Windows: "cmd" (default), "powershell", "pwsh". On Unix: "sh" (default), "bash", "zsh".
     #[schemars(description = "Shell to use: cmd/powershell/pwsh on Windows; sh/bash/zsh on Unix")]
     pub shell: Option<String>,
+    /// Custom shell executable path (e.g., C:\Tools\pwh.exe). Overrides `shell` when provided.
+    #[schemars(description = "Custom shell executable path. Overrides shell when provided")]
+    pub shell_path: Option<String>,
+    /// Custom shell argument (e.g., -Command, /C). If not provided, inferred from shell type.
+    #[schemars(description = "Custom shell argument. Inferred from shell type if not provided")]
+    pub shell_arg: Option<String>,
 }
 
 /// Check for command injection patterns
@@ -107,8 +113,35 @@ fn truncate_output(output: String) -> String {
     }
 }
 
-/// Determine shell executable and argument based on platform and user request
-fn resolve_shell(shell: Option<&str>) -> (String, String) {
+/// Determine shell executable and argument based on platform and user request.
+/// Priority: shell_arg > shell_path (with inference) > shell shortcut > default
+fn resolve_shell(shell: Option<&str>, shell_path: Option<&str>, shell_arg: Option<&str>) -> (String, String) {
+    // If shell_arg is explicitly provided, use it
+    if let Some(arg) = shell_arg {
+        let exec = shell_path.map(|s| s.to_string()).unwrap_or_else(|| {
+            #[cfg(windows)]
+            { "cmd".to_string() }
+            #[cfg(not(windows))]
+            { "sh".to_string() }
+        });
+        return (exec, arg.to_string());
+    }
+
+    // If shell_path is provided, infer argument from executable name
+    if let Some(path) = shell_path {
+        let lower = path.to_lowercase();
+        let arg = if lower.contains("powershell") || lower.contains("pwsh") || lower.contains("pwh") {
+            "-Command".to_string()
+        } else {
+            #[cfg(windows)]
+            { "/C".to_string() }
+            #[cfg(not(windows))]
+            { "-c".to_string() }
+        };
+        return (path.to_string(), arg);
+    }
+
+    // Fall back to shell shortcut name
     #[cfg(windows)]
     {
         match shell {
@@ -142,11 +175,13 @@ pub async fn execute_command(
         return Err(format!("Command exceeds maximum length of {} characters", MAX_COMMAND_LENGTH));
     }
     let shell = params.shell.as_deref();
+    let shell_path = params.shell_path.as_deref();
+    let shell_arg = params.shell_arg.as_deref();
 
     // Audit log
     info!(
-        "[AUDIT] Execute command attempt: cwd={}, command={}, shell={:?}",
-        cwd, command, shell
+        "[AUDIT] Execute command attempt: cwd={}, command={}, shell={:?}, shell_path={:?}, shell_arg={:?}",
+        cwd, command, shell, shell_path, shell_arg
     );
 
     // Security check 1: working directory must be within allowed working directory
@@ -231,7 +266,7 @@ pub async fn execute_command(
     state.cleanup_expired_pending_commands().await;
 
     // Determine shell based on OS and user preference
-    let (shell_exec, shell_arg) = resolve_shell(shell);
+    let (shell_exec, shell_arg) = resolve_shell(shell, shell_path, shell_arg);
 
     // Build command
     let mut cmd = Command::new(&shell_exec);
@@ -355,15 +390,27 @@ mod tests {
     fn test_resolve_shell() {
         #[cfg(windows)]
         {
-            assert_eq!(resolve_shell(Some("cmd")), ("cmd".to_string(), "/C".to_string()));
-            assert_eq!(resolve_shell(Some("powershell")), ("powershell.exe".to_string(), "-Command".to_string()));
-            assert_eq!(resolve_shell(None), ("cmd".to_string(), "/C".to_string()));
+            assert_eq!(resolve_shell(Some("cmd"), None, None), ("cmd".to_string(), "/C".to_string()));
+            assert_eq!(resolve_shell(Some("powershell"), None, None), ("powershell.exe".to_string(), "-Command".to_string()));
+            assert_eq!(resolve_shell(None, None, None), ("cmd".to_string(), "/C".to_string()));
+            // Custom shell path
+            assert_eq!(resolve_shell(None, Some(r"C:\Tools\pwh.exe"), None), (r"C:\Tools\pwh.exe".to_string(), "-Command".to_string()));
+            assert_eq!(resolve_shell(None, Some(r"C:\Tools\mysh.exe"), None), (r"C:\Tools\mysh.exe".to_string(), "/C".to_string()));
+            // Custom shell arg
+            assert_eq!(resolve_shell(None, Some(r"C:\Tools\sh.exe"), Some("-c")), (r"C:\Tools\sh.exe".to_string(), "-c".to_string()));
+            // shell_arg without shell_path
+            assert_eq!(resolve_shell(None, None, Some("/C")), ("cmd".to_string(), "/C".to_string()));
         }
         #[cfg(not(windows))]
         {
-            assert_eq!(resolve_shell(Some("sh")), ("sh".to_string(), "-c".to_string()));
-            assert_eq!(resolve_shell(Some("bash")), ("bash".to_string(), "-c".to_string()));
-            assert_eq!(resolve_shell(None), ("sh".to_string(), "-c".to_string()));
+            assert_eq!(resolve_shell(Some("sh"), None, None), ("sh".to_string(), "-c".to_string()));
+            assert_eq!(resolve_shell(Some("bash"), None, None), ("bash".to_string(), "-c".to_string()));
+            assert_eq!(resolve_shell(None, None, None), ("sh".to_string(), "-c".to_string()));
+            // Custom shell path
+            assert_eq!(resolve_shell(None, Some("/usr/local/bin/pwh"), None), ("/usr/local/bin/pwh".to_string(), "-Command".to_string()));
+            assert_eq!(resolve_shell(None, Some("/usr/local/bin/myshell"), None), ("/usr/local/bin/myshell".to_string(), "-c".to_string()));
+            // Custom shell arg
+            assert_eq!(resolve_shell(None, Some("/bin/bash"), Some("--login -c")), ("/bin/bash".to_string(), "--login -c".to_string()));
         }
     }
 }

@@ -6,68 +6,76 @@ use std::path::PathBuf;
 #[command(
     name = "rust-mcp-server",
     author = "MCP Server Team",
-    version = "0.2.0",
+    version = "0.3.0",
     about = "A high-performance MCP server with WebUI control panel / 高性能 MCP 服务器，带 WebUI 控制面板",
     long_about = "Rust MCP Server - A high-performance Model Context Protocol server\n\
                     Rust MCP 服务器 - 高性能模型上下文协议服务器\n\n\
                     Features / 功能特性:\n\
                     - HTTP/SSE transport modes / HTTP/SSE 传输模式\n\
                     - WebUI control panel for tool management / WebUI 控制面板管理工具\n\
-                    - 20 built-in tools (file ops, calculator, HTTP, etc.) / 20个内置工具（文件操作、计算器、HTTP等）\n\
+                    - 25 built-in tools (file ops, calculator, HTTP, clipboard, diff, archive, notes, etc.) / 25个内置工具（文件操作、计算器、HTTP、剪贴板、差异比较、归档、笔记等）\n\
+                    - Tool preset profiles for quick scenario switching / 工具预设集快速切换场景\n\
                     - Real-time tool call statistics / 实时工具调用统计\n\
-                    - Tool enable/disable control / 工具启用/禁用控制"
+                    - Tool enable/disable control / 工具启用/禁用控制",
+    help_template = "{name} {version}\n{about}\n\nUsage / 用法:\n  {usage}\n\nOptions / 选项:\n{options}"
 )]
 pub struct AppConfig {
-    /// WebUI listening address (WebUI 监听地址)
+    /// WebUI listening address / WebUI 监听地址
     #[arg(long, default_value = "127.0.0.1", env = "MCP_WEBUI_HOST")]
     pub webui_host: String,
 
-    /// WebUI listening port (WebUI 监听端口，默认: 2233)
+    /// WebUI listening port / WebUI 监听端口，默认: 2233
     #[arg(long, default_value_t = 2233, env = "MCP_WEBUI_PORT")]
     pub webui_port: u16,
 
-    /// MCP transport type: http (default, JSON response), sse (stream response)
-    /// MCP 传输模式: http (默认，JSON响应), sse (流式响应)
+    /// MCP transport type: http (default, JSON response), sse (stream response) / MCP 传输模式: http (默认，JSON响应), sse (流式响应)
     #[arg(long, default_value = "http", env = "MCP_TRANSPORT")]
     pub mcp_transport: String,
 
-    /// MCP service listening address (MCP 服务监听地址)
+    /// MCP service listening address / MCP 服务监听地址
     #[arg(long, default_value = "127.0.0.1", env = "MCP_HOST")]
     pub mcp_host: String,
 
-    /// MCP service listening port (MCP 服务监听端口，默认: 3344)
+    /// MCP service listening port / MCP 服务监听端口，默认: 3344
     #[arg(long, default_value_t = 3344, env = "MCP_PORT")]
     pub mcp_port: u16,
 
-    /// Maximum concurrent tool calls (最大并发调用数，默认: 10)
+    /// Maximum concurrent tool calls / 最大并发调用数，默认: 10
     #[arg(long, default_value_t = 10, env = "MCP_MAX_CONCURRENCY")]
     pub max_concurrency: usize,
 
-    /// Disabled tools, comma-separated (禁用的工具列表，逗号分隔)
-    /// Default enabled: calculator, dir_list, file_read, file_search, image_read, file_stat, path_exists, json_query, git_ops, env_get
+    /// Disabled tools, comma-separated / 禁用的工具列表，逗号分隔
+    /// Default enabled: calculator, dir_list, file_read, file_search, image_read, file_stat, path_exists, json_query, git_ops, env_get, execute_python, diff, note_storage, clipboard
     #[arg(
         long,
         value_delimiter = ',',
-        default_value = "file_write,file_ops,file_edit,http_request,datetime,execute_command,process_list,base64_codec,hash_compute,system_info",
+        default_value = "file_write,file_ops,file_edit,http_request,datetime,execute_command,process_list,base64_codec,hash_compute,system_info,archive",
         env = "MCP_DISABLE_TOOLS"
     )]
     #[serde(default = "default_disable_tools")]
     pub disable_tools: Vec<String>,
 
-    /// Working directory for file operations (dangerous ops restricted here)
-    /// 文件操作工作目录（危险操作限制在此目录内）
+    /// Working directory for file operations (dangerous ops restricted here) / 文件操作工作目录（危险操作限制在此目录内）
     #[arg(long, default_value = ".", env = "MCP_WORKING_DIR")]
     pub working_dir: PathBuf,
 
-    /// Log level: trace, debug, info, warn, error (日志级别: trace, debug, info, warn, error)
+    /// Log level: trace, debug, info, warn, error / 日志级别: trace, debug, info, warn, error
     #[arg(long, default_value = "info", env = "MCP_LOG_LEVEL")]
     pub log_level: String,
 
-    /// Disable WebUI (禁用 WebUI 控制面板)
+    /// Disable WebUI / 禁用 WebUI 控制面板
     #[arg(long, env = "MCP_DISABLE_WEBUI")]
     pub disable_webui: bool,
 
-    /// Allowed dangerous commands for execute_command tool (允许执行的危险命令序号列表)
+    /// Tool preset to apply on startup (minimal/coding/document/data_analysis/system_admin/full_power/none) / 启动时应用的工具预设
+    #[arg(long, default_value = "minimal", env = "MCP_PRESET")]
+    pub preset: String,
+
+    /// Custom system prompt passed to LLM via MCP instructions / 自定义系统提示词，通过 MCP instructions 传递给 LLM
+    #[arg(long, env = "MCP_SYSTEM_PROMPT")]
+    pub system_prompt: Option<String>,
+
+    /// Allowed dangerous commands for execute_command tool / 允许执行的危险命令序号列表
     /// 默认全部禁止，可通过序号启用特定命令
     /// 1=rm, 2=del, 3=format, 4=mkfs, 5=dd, 6=fork, 7=eval, 8=exec, 9=system, 10=shred
     /// 11=rd, 12=format, 13=diskpart, 14=reg, 15=net, 16=sc, 17=schtasks, 18=powercfg, 19=bcdedit, 20=wevtutil
@@ -75,7 +83,7 @@ pub struct AppConfig {
         long,
         value_delimiter = ',',
         env = "MCP_ALLOW_DANGEROUS_COMMANDS",
-        help = "允许执行的危险命令序号，逗号分隔。默认全部禁止。\n\
+        help = "Allowed dangerous command IDs, comma-separated. Default: none. / 允许执行的危险命令序号，逗号分隔。默认全部禁止。\n\
                 Dangerous command list / 危险命令列表:\n\
                 Linux: 1=rm(delete), 2=del(delete), 3=format, 4=mkfs, 5=dd, 6=fork(:(){:|:&};:), 7=eval, 8=exec, 9=system, 10=shred\n\
                 Windows: 11=rd/s, 12=format, 13=diskpart, 14=reg(registry/注册表), 15=net(network/网络), 16=sc(service/服务), 17=schtasks(scheduled tasks/计划任务), 18=powercfg, 19=bcdedit, 20=wevtutil"
@@ -83,14 +91,12 @@ pub struct AppConfig {
     #[serde(default)]
     pub allow_dangerous_commands: Vec<u8>,
 
-    /// Custom allowed hosts for DNS rebinding protection (覆盖自动推断的 allowed_hosts)
-    /// 自定义允许的 Host 头列表，用于 DNS 重绑定保护
+    /// Custom allowed hosts for DNS rebinding protection / 自定义允许的 Host 头列表，用于 DNS 重绑定保护
     #[arg(long, value_delimiter = ',', env = "MCP_ALLOWED_HOSTS")]
     #[serde(default)]
     pub allowed_hosts: Option<Vec<String>>,
 
-    /// Disable allowed hosts check (NOT recommended for public deployments)
-    /// 禁用 allowed_hosts 检查（不推荐用于公网部署）
+    /// Disable allowed hosts check (NOT recommended for public deployments) / 禁用 allowed_hosts 检查（不推荐用于公网部署）
     #[arg(long, env = "MCP_DISABLE_ALLOWED_HOSTS")]
     #[serde(default)]
     pub disable_allowed_hosts: bool,
@@ -109,6 +115,7 @@ fn default_disable_tools() -> Vec<String> {
         "base64_codec".to_string(),
         "hash_compute".to_string(),
         "system_info".to_string(),
+        "archive".to_string(),
     ]
 }
 
@@ -275,6 +282,8 @@ mod tests {
             working_dir: PathBuf::from("."),
             log_level: "info".to_string(),
             disable_webui: false,
+            preset: "minimal".to_string(),
+            system_prompt: None,
             allow_dangerous_commands: vec![],
             allowed_hosts: None,
             disable_allowed_hosts: false,

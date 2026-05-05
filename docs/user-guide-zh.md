@@ -67,12 +67,30 @@ WebUI 提供 Cyberpunk AI Command Center 控制面板：
 
 ### 启用/禁用工具
 
-**重要提示:** 默认情况下，以下 11 个工具为安全起见是启用的：`calculator`、`dir_list`、`file_read`、`file_search`、`image_read`、`file_stat`、`path_exists`、`json_query`、`git_ops`、`env_get`、`execute_python`。危险工具（`execute_command`、`file_write`、`file_ops`、`file_edit`）默认禁用。
+**重要提示:** 服务器默认以 `minimal` 预设启动，启用 16 个安全工具（包含 `execute_python`，但处于沙箱模式，无文件系统访问）。您可以通过 WebUI 侧边栏或 `--preset` CLI 选项切换预设。各工具仍可独立开关。
 
 1. 打开 WebUI 访问 `http://127.0.0.1:2233`
 2. 在工具网格中找到对应工具卡片
 3. 点击工具卡片上的开关
 4. 更改立即生效（无需重启）
+
+### 工具预设
+
+侧边栏提供**工具预设**功能，可一键切换工具配置：
+- **minimal**：安全只读工具 + 沙箱 Python（16 个，`execute_python` 无文件系统访问）
+- **coding**：开发相关工具，包含文件编辑和命令执行（23 个，`execute_python` 可文件系统访问）
+- **document**：文档处理工具，包含文件写入和剪贴板（16 个，`execute_python` 无文件系统访问）
+- **data_analysis**：数据分析工具，包含计算器、Python 和差异比较（18 个，`execute_python` 可文件系统访问）
+- **system_admin**：系统管理工具，包含系统信息、进程列表和命令执行（20 个，`execute_python` 可文件系统访问）
+- **full_power**：启用全部 25 个工具（`execute_python` 可文件系统访问）
+
+点击侧边栏中的预设按钮即可应用。当前激活的预设会显示在预设网格上方。
+
+### 批量操作
+
+使用侧边栏中的**批量操作**按钮可快速：
+- **全部启用**：一次性启用所有工具
+- **全部禁用**：一次性禁用所有工具
 
 ### 查看工具统计
 
@@ -444,6 +462,83 @@ Base64 编码或解码。
   "input": "Hello, World!",
   "algorithm": "SHA256"
 }
+```
+
+### 剪贴板与归档工具
+
+#### clipboard
+读写系统剪贴板内容，支持文本和图片操作。
+
+**参数：**
+- `operation` (string): `"read_text"`、`"write_text"`、`"read_image"` 或 `"clear"`
+- `text` (string, 可选): 要写入的文本（`write_text` 时必需）
+
+**示例：**
+```json
+{"operation": "read_text"}
+{"operation": "write_text", "text": "Hello, World!"}
+{"operation": "clear"}
+```
+
+#### archive
+创建、解压、列出或追加 ZIP 归档文件。所有路径均限制在工作目录内。
+
+**参数：**
+- `operation` (string): `"create"`、`"extract"`、`"list"` 或 `"append"`
+- `archive_path` (string): ZIP 归档文件路径
+- `source_paths` (array, 可选): 要包含的文件/目录（`create`/`append` 时使用）
+- `destination` (string, 可选): 解压目标路径（`extract` 时使用，默认工作目录）
+- `compression_level` (number, 可选): 1-9（默认: 6，仅 `create` 时有效）
+
+**示例：**
+```json
+{"operation": "create", "archive_path": "backup.zip", "source_paths": ["src", "Cargo.toml"]}
+{"operation": "extract", "archive_path": "backup.zip", "destination": "./extracted"}
+{"operation": "list", "archive_path": "backup.zip"}
+```
+
+### 差异比较与便签工具
+
+#### diff
+比较文本、文件或目录差异，支持多种输出格式。
+
+**参数：**
+- `operation` (string): `"compare_text"`、`"compare_files"`、`"directory_diff"` 或 `"git_diff_file"`
+- `old_text` / `new_text` (string, 可选): `compare_text` 时使用
+- `old_path` / `new_path` (string, 可选): `compare_files` / `directory_diff` 时使用
+- `file_path` (string, 可选): `git_diff_file` 时使用（对比工作区与 HEAD 版本）
+- `output_format` (string, 可选): `"unified"`（默认）、`"side_by_side"`、`"summary"` 或 `"inline"`
+- `context_lines` (number, 可选): 1-20（默认: 3）
+- `ignore_whitespace` (boolean, 可选): 默认 false
+- `ignore_case` (boolean, 可选): 默认 false
+- `max_output_lines` (number, 可选): 默认 500
+- `word_level` (boolean, 可选): 启用词级行内高亮（默认: true）
+
+**示例：**
+```json
+{"operation": "compare_text", "old_text": "foo\nbar", "new_text": "foo\nbaz", "output_format": "unified"}
+{"operation": "git_diff_file", "file_path": "src/main.rs"}
+```
+
+#### note_storage
+AI 短期内存便签本。便签仅保存在内存中，30 分钟无操作后自动清空。
+
+**限制：** 最多 100 条便签，每条最多 50000 字符，标题最多 200 字符，最多 10 个标签。
+
+**参数：**
+- `operation` (string): `"create"`、`"list"`、`"read"`、`"update"`、`"delete"`、`"search"` 或 `"append"`
+- `id` (number, 可选): 便签 ID（`read`/`update`/`delete`/`append` 时使用）
+- `title` (string, 可选): `create`/`update` 时使用
+- `content` (string, 可选): `create`/`update` 时使用
+- `tags` (array, 可选): `create`/`update` 时使用
+- `category` (string, 可选): `create`/`update`/`list` 时使用
+- `query` (string, 可选): `search` 时使用
+- `append_content` (string, 可选): `append` 时使用
+
+**示例：**
+```json
+{"operation": "create", "title": "用户偏好暗黑模式", "content": "...", "tags": ["偏好"], "category": "用户偏好"}
+{"operation": "search", "query": "偏好"}
 ```
 
 #### file_stat

@@ -18,6 +18,8 @@ class CommandCenter {
         this.metricsInterval = null;
         this.theme = 'system'; // 'dark' | 'light' | 'system'
         this.pythonFsAccessEnabled = false;
+        this.presets = [];
+        this.currentPreset = null;
 
         this.i18n = {
             zh: {
@@ -83,6 +85,19 @@ class CommandCenter {
                 author: '作者',
                 license: '许可证',
                 description: '高性能模型上下文协议（MCP）服务器，带 WebUI 控制面板。',
+                presetSection: '工具预设',
+                batchSection: '批量操作',
+                batchEnableAll: '全部启用',
+                batchDisableAll: '全部禁用',
+                presetCurrent: '当前',
+                presetNone: '无',
+                presetNameMinimal: '最小模式',
+                presetNameCoding: '编码开发',
+                presetNameDocument: '文档处理',
+                presetNameDataAnalysis: '数据分析',
+                presetNameSystemAdmin: '系统管理',
+                presetNameFullPower: '全功能',
+                presetToolsCount: '{count} 个工具',
                 github: 'GitHub',
             },
             en: {
@@ -148,6 +163,19 @@ class CommandCenter {
                 author: 'Author',
                 license: 'License',
                 description: 'A high-performance Model Context Protocol (MCP) server with WebUI control panel.',
+                presetSection: 'Tool Presets',
+                batchSection: 'Batch Actions',
+                batchEnableAll: 'Enable All',
+                batchDisableAll: 'Disable All',
+                presetCurrent: 'Current',
+                presetNone: 'None',
+                presetNameMinimal: 'Minimal',
+                presetNameCoding: 'Coding',
+                presetNameDocument: 'Document',
+                presetNameDataAnalysis: 'Data Analysis',
+                presetNameSystemAdmin: 'System Admin',
+                presetNameFullPower: 'Full Power',
+                presetToolsCount: '{count} tools',
                 github: 'GitHub',
             }
         };
@@ -168,13 +196,17 @@ class CommandCenter {
                 http_request: { desc: '发起 HTTP 请求，支持 JSON 提取和响应限制', usage: '用法：发起 HTTP 请求。\n参数：url（地址），method（GET/POST），可选 headers，可选 body，可选 extract_json_path（如 "/data/0/name"），可选 include_response_headers（默认false），可选 max_response_chars（默认15000）\n示例：{"url": "https://api.example.com", "method": "GET"}' },
                 datetime: { desc: '获取当前日期和时间', usage: '用法：获取当前日期时间。\n无需参数。\n示例：{}' },
                 image_read: { desc: '读取图像文件并返回 base64 数据或仅元数据', usage: '用法：读取图像文件。\n参数：path（路径），可选 mode（full/metadata，默认 full）\n示例：{"path": "image.png", "mode": "metadata"}' },
-                execute_command: { desc: '执行 shell 命令（默认禁用，危险操作）', usage: '用法：执行 shell 命令。\n参数：command（命令），可选 cwd（工作目录），可选 timeout，可选 shell（Windows: cmd/powershell/pwsh; Unix: sh/bash/zsh）\n示例：{"command": "ls -la", "cwd": "/home/user"}' },
+                execute_command: { desc: '执行 shell 命令（默认禁用，危险操作）', usage: '用法：执行 shell 命令。\n参数：command（命令），可选 cwd（工作目录），可选 timeout，可选 shell（Windows: cmd/powershell/pwsh; Unix: sh/bash/zsh），可选 shell_path（自定义 shell 路径，如 C:\\Tools\\pwh.exe），可选 shell_arg（自定义参数，如 -Command, /C）\n示例：{"command": "ls -la", "cwd": "/home/user"} | {"command": "Get-Date", "shell_path": "C:\\Tools\\pwh.exe"}' },
                 process_list: { desc: '列出系统进程', usage: '用法：列出系统进程。\n无需参数。\n示例：{}' },
                 base64_codec: { desc: '对字符串进行 Base64 编码或解码', usage: '用法：Base64 编解码。\n参数：operation（encode/decode），input（输入）\n示例：{"operation": "encode", "input": "Hello, World!"}' },
                 hash_compute: { desc: '计算字符串或文件的哈希值（MD5/SHA1/SHA256）', usage: '用法：计算哈希。\n参数：input（输入），algorithm（MD5/SHA1/SHA256）\n文件需前缀 "file:"\n示例：{"input": "hello", "algorithm": "SHA256"}' },
                 system_info: { desc: '获取系统信息', usage: '用法：获取系统信息。\n无需参数。\n示例：{}' },
                 env_get: { desc: '获取环境变量的值', usage: '用法：获取环境变量。\n参数：name（变量名）\n示例：{"name": "PATH"}' },
                 execute_python: { desc: '执行 Python 代码。所有 Python 标准库模块均可使用。', usage: '用法：执行 Python 代码。\n参数：code（Python 代码），可选 timeout_ms（默认5000，最大30000）\n将返回值赋给变量 __result。若未设置，最后一行将自动作为表达式求值。\n所有 Python 标准库模块均可使用。\n通过 WebUI 上的"文件系统"开关可启用本地文件系统访问。\n示例：{"code": "import math\n__result = math.pi * 2"}' },
+                clipboard: { desc: '读写系统剪贴板内容，支持文本和图片', usage: '用法：读写系统剪贴板。\n参数：operation（read_text/write_text/read_image/clear），可选 text（write_text 时需要）\n示例：{"operation": "read_text"} | {"operation": "write_text", "text": "Hello"} | {"operation": "clear"}' },
+                archive: { desc: '创建、解压、列出或追加 ZIP 归档文件', usage: '用法：ZIP 归档操作。\n参数：operation（create/extract/list/append），archive_path，可选 source_paths（create/append），可选 destination（extract），可选 compression_level 1-9（默认6）\n示例：{"operation": "create", "archive_path": "backup.zip", "source_paths": ["src", "Cargo.toml"]} | {"operation": "extract", "archive_path": "backup.zip", "destination": "./extracted"}' },
+                diff: { desc: '比较文本、文件或目录的差异，支持多种输出格式', usage: '用法：比较差异。\n参数：operation（compare_text/compare_files/directory_diff/git_diff_file），可选 old_text/new_text（compare_text），可选 old_path/new_path（compare_files/directory_diff），可选 file_path（git_diff_file），可选 output_format（unified/side_by_side/summary/inline，默认unified），可选 context_lines（默认3），可选 ignore_whitespace（默认false），可选 ignore_case（默认false），可选 max_output_lines（默认500），可选 word_level（默认true）\n示例：{"operation": "compare_text", "old_text": "foo\nbar", "new_text": "foo\nbaz", "output_format": "unified"} | {"operation": "git_diff_file", "file_path": "src/main.rs"}' },
+                note_storage: { desc: 'AI 短期记忆便签本，30分钟无操作自动清空', usage: '用法：AI 短期记忆便签本。\n参数：operation（create/list/read/update/delete/search/append），可选 id（read/update/delete/append），可选 title/content/tags/category（create/update），可选 tag_filter/category（list），可选 query（search），可选 append_content（append）\n便签仅保存在内存中，30分钟无操作后自动清空。最多100条，每条最多50000字符。\n示例：{"operation": "create", "title": "用户偏好暗黑模式", "content": "...", "tags": ["偏好"], "category": "用户偏好"} | {"operation": "search", "query": "偏好"}' },
             },
             en: {
                 dir_list: { desc: 'List directory contents with filtering and brief mode (max depth 5). Returns char_count and line_count for UTF-8 text files', usage: 'Usage: List directory contents.\nParameters: path, optional max_depth (default: 2, max: 5), optional include_hidden, optional pattern (glob e.g. "*.rs"), optional brief (default: true), optional sort_by (name/type/size/modified), optional flatten (default: false)\nReturns: For each file, if it is UTF-8 text, includes char_count and line_count\nExample: {"path": "/home/user", "pattern": "*.rs", "brief": true}' },
@@ -191,13 +223,17 @@ class CommandCenter {
                 http_request: { desc: 'Make HTTP requests with optional JSON extraction and response limiting', usage: 'Usage: Make HTTP requests.\nParameters: url, method (GET/POST), optional headers, optional body, optional extract_json_path (e.g. "/data/0/name"), optional include_response_headers (default: false), optional max_response_chars (default: 15000)\nExample: {"url": "https://api.example.com", "method": "GET"}' },
                 datetime: { desc: 'Get current date and time', usage: 'Usage: Get current date and time.\nNo parameters required.\nExample: {}' },
                 image_read: { desc: 'Read an image file and return base64 data or metadata only', usage: 'Usage: Read image file.\nParameters: path, optional mode (full/metadata, default: full)\nExample: {"path": "image.png", "mode": "metadata"}' },
-                execute_command: { desc: 'Execute a shell command (disabled by default, dangerous)', usage: 'Usage: Execute shell command.\nParameters: command, optional cwd, optional timeout, optional shell (Windows: cmd/powershell/pwsh; Unix: sh/bash/zsh)\nExample: {"command": "ls -la", "cwd": "/home/user"}' },
+                execute_command: { desc: 'Execute a shell command (disabled by default, dangerous)', usage: 'Usage: Execute shell command.\nParameters: command, optional cwd, optional timeout, optional shell (Windows: cmd/powershell/pwsh; Unix: sh/bash/zsh), optional shell_path (custom shell path, e.g., C:\\Tools\\pwh.exe), optional shell_arg (custom argument, e.g., -Command, /C)\nExample: {"command": "ls -la", "cwd": "/home/user"} | {"command": "Get-Date", "shell_path": "C:\\Tools\\pwh.exe"}' },
                 process_list: { desc: 'List system processes', usage: 'Usage: List system processes.\nNo parameters required.\nExample: {}' },
                 base64_codec: { desc: 'Encode or decode base64 strings', usage: 'Usage: Base64 encode/decode.\nParameters: operation (encode/decode), input\nExample: {"operation": "encode", "input": "Hello, World!"}' },
                 hash_compute: { desc: 'Compute hash of string or file (MD5, SHA1, SHA256)', usage: 'Usage: Compute hash.\nParameters: input, algorithm (MD5/SHA1/SHA256)\nFor files, prefix path with "file:"\nExample: {"input": "hello", "algorithm": "SHA256"}' },
                 system_info: { desc: 'Get system information', usage: 'Usage: Get system information.\nNo parameters required.\nExample: {}' },
                 env_get: { desc: 'Get the value of an environment variable', usage: 'Usage: Get environment variable.\nParameters: name\nExample: {"name": "PATH"}' },
                 execute_python: { desc: 'Execute Python code. All Python standard library modules are available.', usage: 'Usage: Execute Python code.\nParameters: code (Python code), optional timeout_ms (default: 5000, max: 30000)\nAssign the return value to __result. If not set, the last line is automatically evaluated as an expression.\nAll Python standard library modules are available.\nEnable local filesystem access via the WebUI "Filesystem" toggle.\nExample: {"code": "import math\n__result = math.pi * 2"}' },
+                clipboard: { desc: 'Read or write system clipboard content, supports text and images', usage: 'Usage: Read or write system clipboard.\nParameters: operation (read_text/write_text/read_image/clear), optional text (required for write_text)\nExample: {"operation": "read_text"} | {"operation": "write_text", "text": "Hello"} | {"operation": "clear"}' },
+                archive: { desc: 'Create, extract, list, or append ZIP archive files', usage: 'Usage: ZIP archive operations.\nParameters: operation (create/extract/list/append), archive_path, optional source_paths (create/append), optional destination (extract), optional compression_level 1-9 (default: 6)\nExample: {"operation": "create", "archive_path": "backup.zip", "source_paths": ["src", "Cargo.toml"]} | {"operation": "extract", "archive_path": "backup.zip", "destination": "./extracted"}' },
+                diff: { desc: 'Compare text, files, or directories with multiple output formats', usage: 'Usage: Compare differences.\nParameters: operation (compare_text/compare_files/directory_diff/git_diff_file), optional old_text/new_text (compare_text), optional old_path/new_path (compare_files/directory_diff), optional file_path (git_diff_file), optional output_format (unified/side_by_side/summary/inline, default: unified), optional context_lines (default: 3), optional ignore_whitespace (default: false), optional ignore_case (default: false), optional max_output_lines (default: 500), optional word_level (default: true)\nExample: {"operation": "compare_text", "old_text": "foo\nbar", "new_text": "foo\nbaz", "output_format": "unified"} | {"operation": "git_diff_file", "file_path": "src/main.rs"}' },
+                note_storage: { desc: 'AI short-term memory scratchpad, auto-clears after 30min inactivity', usage: 'Usage: AI short-term memory scratchpad.\nParameters: operation (create/list/read/update/delete/search/append), optional id (read/update/delete/append), optional title/content/tags/category (create/update), optional tag_filter/category (list), optional query (search), optional append_content (append)\nNotes are stored only in memory and auto-cleared after 30 minutes of inactivity. Max 100 notes, 50000 chars per note.\nExample: {"operation": "create", "title": "User prefers dark mode", "content": "...", "tags": ["preference"], "category": "user_prefs"} | {"operation": "search", "query": "preference"}' },
             }
         };
 
@@ -505,10 +541,12 @@ class CommandCenter {
     // ============================================================
     async loadData() {
         try {
-            const [toolsRes, configRes, fsRes] = await Promise.all([
+            const [toolsRes, configRes, fsRes, presetsRes, currentPresetRes] = await Promise.all([
                 fetch('/api/tools'),
                 fetch('/api/config'),
-                fetch('/api/python-fs-access')
+                fetch('/api/python-fs-access'),
+                fetch('/api/tool-presets'),
+                fetch('/api/tool-presets/current')
             ]);
             if (toolsRes.ok) {
                 const toolsData = await toolsRes.json();
@@ -524,6 +562,13 @@ class CommandCenter {
             if (fsRes.ok) {
                 const fsData = await fsRes.json();
                 this.pythonFsAccessEnabled = fsData.enabled || false;
+            }
+            if (presetsRes.ok) {
+                this.presets = await presetsRes.json();
+            }
+            if (currentPresetRes.ok) {
+                const data = await currentPresetRes.json();
+                this.currentPreset = data.preset || null;
             }
             this.render();
         } catch (err) {
@@ -659,6 +704,10 @@ class CommandCenter {
         document.getElementById('about-btn')?.addEventListener('click', () => this.openAboutModal());
         document.getElementById('close-about-modal')?.addEventListener('click', () => this.closeModal('about-modal'));
         document.getElementById('close-about-btn')?.addEventListener('click', () => this.closeModal('about-modal'));
+
+        // Batch actions
+        document.getElementById('batch-enable-all')?.addEventListener('click', () => this.batchEnableTools(true));
+        document.getElementById('batch-disable-all')?.addEventListener('click', () => this.batchEnableTools(false));
     }
 
     closeSidebar() {
@@ -704,6 +753,47 @@ class CommandCenter {
             if (!res.ok) throw new Error('Failed');
             const tool = this.tools.find(t => t.name === name);
             if (tool) { tool.enabled = enable; this.render(); }
+        } catch (err) {
+            this.showError(this.t('connectionError'));
+        }
+    }
+
+    async batchEnableTools(enabled) {
+        try {
+            const toolNames = this.tools.map(t => t.name);
+            const res = await fetch('/api/tools/batch-enable', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ tools: toolNames, enabled })
+            });
+            if (!res.ok) throw new Error('Failed');
+            this.tools.forEach(t => t.enabled = enabled);
+            this.currentPreset = null; // Custom selection overrides preset
+            this.render();
+            this.showSuccess(enabled ? 'All tools enabled' : 'All tools disabled');
+        } catch (err) {
+            this.showError(this.t('connectionError'));
+        }
+    }
+
+    async applyPreset(name) {
+        try {
+            const res = await fetch(`/api/tool-presets/apply/${encodeURIComponent(name)}`, {
+                method: 'POST'
+            });
+            if (!res.ok) throw new Error('Failed');
+            const data = await res.json();
+            if (data.success) {
+                this.currentPreset = name;
+                // Refresh tools to get updated enabled states
+                const toolsRes = await fetch('/api/tools');
+                if (toolsRes.ok) {
+                    const toolsData = await toolsRes.json();
+                    this.tools = Array.isArray(toolsData) ? toolsData : (toolsData.tools || []);
+                }
+                this.render();
+                this.showSuccess(`Preset "${name}" applied`);
+            }
         } catch (err) {
             this.showError(this.t('connectionError'));
         }
@@ -1007,7 +1097,7 @@ class CommandCenter {
             const res = await fetch('/api/version');
             if (res.ok) {
                 const data = await res.json();
-                document.getElementById('about-version').textContent = 'v' + (data.version || '0.2.0');
+                document.getElementById('about-version').textContent = 'v' + (data.version || '0.3.0');
                 if (data.authors) {
                     document.getElementById('about-author').textContent = data.authors;
                 }
@@ -1084,8 +1174,35 @@ class CommandCenter {
     render() {
         this.renderAlphabetNav();
         this.renderTools();
+        this.renderPresets();
         this.updateLangUI();
         this.updateCallsHud();
+    }
+
+    renderPresets() {
+        const grid = document.getElementById('preset-grid');
+        const currentEl = document.getElementById('preset-current');
+        if (!grid) return;
+        if (currentEl) {
+            currentEl.textContent = `${this.t('presetCurrent')}: ${this.currentPreset || this.t('presetNone')}`;
+        }
+        grid.innerHTML = this.presets.map(p => {
+            const nameKey = 'presetName' + p.name.charAt(0).toUpperCase() + p.name.slice(1);
+            const name = this.t(nameKey) || p.name;
+            const countText = this.t('presetToolsCount').replace('{count}', p.tool_count);
+            return `
+            <button class="preset-btn ${this.currentPreset === p.name ? 'active' : ''}" data-preset="${p.name}">
+                <span class="preset-name">${name}</span>
+                <span class="preset-count">${countText}</span>
+            </button>
+        `}).join('');
+
+        document.querySelectorAll('#preset-grid .preset-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                const name = btn.dataset.preset;
+                this.applyPreset(name);
+            });
+        });
     }
 
     updateCallsHud() {
@@ -1242,6 +1359,21 @@ class CommandCenter {
         const sidebarTitle = document.getElementById('sidebar-title');
         if (sidebarTitle) sidebarTitle.textContent = this.t('config');
 
+        const presetSectionTitle = document.getElementById('preset-section-title');
+        if (presetSectionTitle) presetSectionTitle.textContent = this.t('presetSection');
+
+        const batchSectionTitle = document.getElementById('batch-section-title');
+        if (batchSectionTitle) batchSectionTitle.textContent = this.t('batchSection');
+
+        const batchEnableAll = document.getElementById('batch-enable-all');
+        if (batchEnableAll) batchEnableAll.textContent = this.t('batchEnableAll');
+
+        const batchDisableAll = document.getElementById('batch-disable-all');
+        if (batchDisableAll) batchDisableAll.textContent = this.t('batchDisableAll');
+
+        const presetCurrent = document.getElementById('preset-current');
+        if (presetCurrent) presetCurrent.textContent = `${this.t('presetCurrent')}: ${this.currentPreset || this.t('presetNone')}`;
+
         const configTitle = document.getElementById('config-modal-title');
         if (configTitle) configTitle.textContent = this.t('configTitle');
 
@@ -1302,6 +1434,8 @@ class CommandCenter {
         // Browse button
         const browseBtn = document.getElementById('browse-working-dir');
         if (browseBtn) browseBtn.textContent = this.t('browse');
+
+        this.renderPresets();
     }
 
     showError(msg) {

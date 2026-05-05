@@ -30,6 +30,42 @@
       "is_calling": false,
       "is_busy": false,
       "is_dangerous": true
+    },
+    {
+      "name": "clipboard",
+      "description": "Read or write system clipboard content (text or image)",
+      "enabled": true,
+      "call_count": 0,
+      "is_calling": false,
+      "is_busy": false,
+      "is_dangerous": false
+    },
+    {
+      "name": "archive",
+      "description": "Create, extract, list, or append ZIP archives",
+      "enabled": false,
+      "call_count": 0,
+      "is_calling": false,
+      "is_busy": false,
+      "is_dangerous": true
+    },
+    {
+      "name": "diff",
+      "description": "Compare text, files, or directories with multiple output formats",
+      "enabled": true,
+      "call_count": 0,
+      "is_calling": false,
+      "is_busy": false,
+      "is_dangerous": false
+    },
+    {
+      "name": "note_storage",
+      "description": "In-memory temporary scratchpad for AI short-term memory",
+      "enabled": true,
+      "call_count": 0,
+      "is_calling": false,
+      "is_busy": false,
+      "is_dangerous": false
     }
   ]
 }
@@ -98,6 +134,98 @@
 }
 ```
 
+#### POST /api/tools/batch-enable
+批量启用或禁用多个工具。
+
+**请求：**
+```json
+{
+  "tools": ["file_read", "file_write", "execute_command"],
+  "enabled": true
+}
+```
+
+**响应：**
+```json
+{
+  "success": true,
+  "enabled": true,
+  "changed": ["file_read", "file_write", "execute_command"],
+  "failed": []
+}
+```
+
+### 工具预设
+
+#### GET /api/tool-presets
+获取所有可用的工具预设。
+
+**响应：**
+```json
+[
+  {
+    "name": "minimal",
+    "description": "Minimal safe mode",
+    "tool_count": 16
+  },
+  {
+    "name": "coding",
+    "description": "Coding & development",
+    "tool_count": 23
+  },
+  {
+    "name": "document",
+    "description": "Document processing",
+    "tool_count": 16
+  },
+  {
+    "name": "data_analysis",
+    "description": "Data analysis",
+    "tool_count": 18
+  },
+  {
+    "name": "system_admin",
+    "description": "System administration",
+    "tool_count": 20
+  },
+  {
+    "name": "full_power",
+    "description": "All tools enabled",
+    "tool_count": 25
+  }
+]
+```
+
+#### GET /api/tool-presets/current
+获取当前激活的预设名称。
+
+**响应：**
+```json
+{
+  "success": true,
+  "preset": "coding"
+}
+```
+
+#### POST /api/tool-presets/apply/{name}
+应用工具预设。此操作会原子性地根据预设配置启用/禁用工具。
+
+**响应：**
+```json
+{
+  "success": true,
+  "preset": "coding"
+}
+```
+
+**可用预设：**
+- `minimal`: 安全只读工具 + 沙箱 Python（16 个，`execute_python` 无文件系统访问）
+- `coding`: 开发相关工具，包含文件编辑和命令执行（23 个，`execute_python` 可文件系统访问）
+- `document`: 文档处理工具，包含文件写入和剪贴板（16 个，`execute_python` 无文件系统访问）
+- `data_analysis`: 数据分析工具，包含计算器、Python 和差异比较（18 个，`execute_python` 可文件系统访问）
+- `system_admin`: 系统管理工具，包含系统信息、进程列表和命令执行（20 个，`execute_python` 可文件系统访问）
+- `full_power`: 启用全部 25 个工具（`execute_python` 可文件系统访问）
+
 ### 服务器状态
 
 #### GET /api/status
@@ -135,7 +263,8 @@
   "mcp_port": 3344,
   "max_concurrency": 10,
   "working_dir": ".",
-  "log_level": "info"
+  "log_level": "info",
+  "system_prompt": null
 }
 ```
 
@@ -167,6 +296,8 @@
 - `mcp_port`
 - `max_concurrency`（范围：1-1000）
 - `working_dir`
+- `log_level`
+- `system_prompt`
 - `log_level` (`"trace"`、`"debug"`、`"info"`、`"warn"`、`"error"`)
 
 **注意：** 修改 `mcp_transport`、`mcp_host`、`mcp_port`、`webui_host`、`webui_port`、`log_level` 或 `working_dir` 后需要重启服务器才能完全生效。当涉及这些字段时，响应将包含 `restart_required: true`。
@@ -286,7 +417,7 @@
 ```json
 {
   "name": "rust-mcp-server",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "A high-performance MCP server with WebUI control panel",
   "authors": "MCP Server Team",
   "repository": "https://github.com/yuunnn-w/Rust-MCP-Server",

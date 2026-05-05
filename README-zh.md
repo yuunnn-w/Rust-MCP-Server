@@ -34,7 +34,9 @@ Rust MCP Server 是一个使用 Rust 构建的高性能 [模型上下文协议 (
 ## 功能特性
 
 ### 核心功能
-- **21 个内置工具**: 文件操作、HTTP 请求、计算、系统信息、Base64 编解码、Git 操作、JSON 查询、Python 代码执行等
+- **25 个内置工具**: 文件操作、HTTP 请求、计算、系统信息、Base64 编解码、Git 操作、JSON 查询、Python 代码执行、剪贴板、归档、差异比较、便签存储等
+- **工具预设**: 6 种内置预设（minimal、coding、document、data_analysis、system_admin、full_power），一键切换工具配置
+- **系统提示**: 通过 `--system-prompt` 或 WebUI 自定义追加到 MCP `initialize` 响应的 instructions
 - **WebUI 控制面板**: Cyberpunk AI Command Center 主题，玻璃态 HUD、动态背景、终端日志流、3D 卡片悬浮效果
 - **实时更新**: 基于 SSE 的实时状态更新
 - **系统指标监控**: 实时 CPU、内存、负载监控（HUD + `/api/system-metrics` 端点）
@@ -76,7 +78,7 @@ Rust MCP Server 是一个使用 Rust 构建的高性能 [模型上下文协议 (
 #### 系统与网络工具
 | 工具 | 描述 | 默认状态 |
 |------|-------------|----------|
-| `execute_command` | 执行带安全检查的 shell 命令，支持指定解释器 | 禁用 |
+| `execute_command` | 执行带安全检查的 shell 命令，支持指定解释器和自定义 shell 路径 | 禁用 |
 | `process_list` | 列出系统进程 | 禁用 |
 | `system_info` | 获取系统信息 | 禁用 |
 | `http_request` | 发起 HTTP GET/POST/PUT/DELETE/PATCH/HEAD 请求 | 禁用 |
@@ -91,6 +93,10 @@ Rust MCP Server 是一个使用 Rust 构建的高性能 [模型上下文协议 (
 | `datetime` | 获取当前日期/时间（本地时区） |
 | `base64_codec` | Base64 编码/解码 |
 | `hash_compute` | 计算 MD5/SHA1/SHA256 哈希 |
+| `clipboard` | 读写系统剪贴板（文本和图片） |
+| `archive` | 创建、解压、列出、追加 ZIP 归档 |
+| `diff` | 比较文本、文件或目录差异，支持多种输出格式 |
+| `note_storage` | AI 短期内存便签本（30 分钟无操作自动清空） |
 
 ## 快速开始
 
@@ -165,16 +171,23 @@ http://127.0.0.1:2233
 | `--mcp-port` | `MCP_PORT` | `3344` | MCP 服务端口 |
 | `--max-concurrency` | `MCP_MAX_CONCURRENCY` | `10` | 最大并发调用数 |
 | `--working-dir` | `MCP_WORKING_DIR` | `.` | 文件操作工作目录 |
-| `--disable-tools` | `MCP_DISABLE_TOOLS` | 见下文 | 禁用的工具列表（默认禁用11个，启用10个） |
+| `--preset` | `MCP_PRESET` | `minimal` | 启动工具预设: minimal/coding/document/data_analysis/system_admin/full_power/none |
+| `--system-prompt` | `MCP_SYSTEM_PROMPT` | - | 自定义系统提示，追加到 MCP instructions |
+| `--disable-tools` | `MCP_DISABLE_TOOLS` | 见下文 | 在预设基础上额外禁用的工具 |
 | `--allow-dangerous-commands` | `MCP_ALLOW_DANGEROUS_COMMANDS` | - | 允许的危险命令 ID |
 | `--log-level` | `MCP_LOG_LEVEL` | `info` | 日志级别 |
 | `--disable-webui` | - | - | 禁用 WebUI 面板 |
 | `--allowed-hosts` | `MCP_ALLOWED_HOSTS` | - | 自定义允许的 Host 头（逗号分隔） |
 | `--disable-allowed-hosts` | `MCP_DISABLE_ALLOWED_HOSTS` | - | 禁用 DNS 重绑定保护（不推荐公网使用） |
 
-**默认工具状态：**
-- **默认启用（11个）：** `calculator`、`dir_list`、`file_read`、`file_search`、`image_read`、`file_stat`、`path_exists`、`json_query`、`git_ops`、`env_get`、`execute_python`
-- **默认禁用（10个）：** `file_write`、`file_ops`、`file_edit`、`http_request`、`datetime`、`execute_command`、`process_list`、`base64_codec`、`hash_compute`、`system_info`
+**工具预设：**
+服务器默认以 `minimal` 预设启动。使用 `--preset <name>` 选择其他预设，或 `--preset none` 跳过自动应用。
+- **minimal**（16 个工具）：安全只读工具 + 沙箱 Python
+- **coding**（23 个工具）：开发相关，包含文件编辑和命令执行
+- **document**（16 个工具）：文档处理，包含文件写入和剪贴板
+- **data_analysis**（18 个工具）：数据分析，包含计算器、Python 和差异比较
+- **system_admin**（20 个工具）：系统管理，包含系统信息和进程列表
+- **full_power**（25 个工具）：启用全部工具
 
 ### 危险命令 ID
 

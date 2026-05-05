@@ -216,6 +216,41 @@ impl McpHandler {
         let allow_fs = self.state.is_python_fs_access_enabled().await;
         tool_result(execute_python::execute_python(params, &working_dir, allow_fs).await)
     }
+
+    #[tool(description = "Read or write system clipboard content. Supports read_text, write_text, read_image, and clear operations. Cross-platform.")]
+    async fn clipboard(
+        &self,
+        params: Parameters<clipboard::ClipboardReadTextParams>,
+    ) -> Result<CallToolResult, McpError> {
+        tool_result(clipboard::clipboard(params).await)
+    }
+
+    #[tool(description = "Create, extract, list, or append ZIP archives. Supports deflate and zstd compression. Restricted to working directory.")]
+    async fn archive(
+        &self,
+        params: Parameters<archive::ArchiveParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let working_dir = self.get_working_dir().await;
+        tool_result(archive::archive(params, &working_dir).await)
+    }
+
+    #[tool(description = "Compare text, files, or directories. Output formats: unified, side_by_side, summary, inline. Supports git_diff_file to compare against HEAD.")]
+    async fn diff(
+        &self,
+        params: Parameters<diff::DiffParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let working_dir = self.get_working_dir().await;
+        tool_result(diff::diff(params, &working_dir).await)
+    }
+
+    #[tool(description = "The AI assistant's short-term memory scratchpad. Use it to temporarily store intermediate results, task sub-steps, context snippets, or working hypotheses during the current conversation or task. Notes are stored only in memory and are automatically erased if not used for 30 minutes. Do not use this for long-term persistence—use it as a thinking workspace to offload complex reasoning or maintain state across multiple tool calls within a session.")]
+    async fn note_storage(
+        &self,
+        params: Parameters<note_storage::NoteStorageParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let state = self.state.clone();
+        tool_result(note_storage::note_storage(params, state).await)
+    }
 }
 
 impl ServerHandler for McpHandler {
@@ -225,6 +260,14 @@ impl ServerHandler for McpHandler {
 
     fn get_info(&self) -> ServerInfo {
         info!("Getting server info for MCP initialization");
+        let mut instructions = "A comprehensive MCP server with file operations, calculations, HTTP requests, and system tools. \
+            Supports resources (file://) and prompts. \
+            Use WebUI at http://127.0.0.1:2233 to manage tool settings."
+            .to_string();
+        if let Some(ref prompt) = self.state.get_system_prompt_sync() {
+            instructions.push_str("\n\n");
+            instructions.push_str(prompt);
+        }
         ServerInfo::new(
             ServerCapabilities::builder()
                 .enable_tools()
@@ -235,11 +278,7 @@ impl ServerHandler for McpHandler {
         )
         .with_server_info(Implementation::from_build_env())
         .with_protocol_version(ProtocolVersion::V_2024_11_05)
-        .with_instructions(
-            "A comprehensive MCP server with file operations, calculations, HTTP requests, and system tools. \
-            Supports resources (file://) and prompts. \
-            Use WebUI at http://127.0.0.1:2233 to manage tool settings."
-        )
+        .with_instructions(instructions)
     }
 
     async fn initialize(
@@ -430,7 +469,7 @@ impl ServerHandler for McpHandler {
         let total_count = all_tools.len();
         let _allow_fs = self.state.is_python_fs_access_enabled().await;
         
-        let mut tools: Vec<Tool> = all_tools
+        let tools: Vec<Tool> = all_tools
             .into_iter()
             .filter(|tool| {
                 self.state.tool_status.get(&tool.name.to_string())
@@ -439,15 +478,8 @@ impl ServerHandler for McpHandler {
             })
             .collect();
         
-        // execute_python description is static and uniform; filesystem status is communicated
-        // through execution error messages when sandbox restrictions are hit.
-        for tool in &mut tools {
-            if tool.name.as_ref() == "execute_python" {
-                tool.description = Some(std::borrow::Cow::Borrowed(
-                    "Execute Python code for calculations, data processing, and logic evaluation. Set __result for return value. All Python standard library modules are available."
-                ));
-            }
-        }
+        // Tool descriptions are set at registration time via tool_router macro.
+        // No runtime description overrides needed.
         
         info!("Listing {} enabled tools ({} total)", tools.len(), total_count);
         Ok(ListToolsResult {

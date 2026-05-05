@@ -4,7 +4,7 @@
 
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
-│                        Rust MCP Server v0.2.0                       │
+│                        Rust MCP Server v0.3.0                       │
 ├─────────────────────────────────────────────────────────────────────┤
 │  ┌─────────────────┐  ┌─────────────────┐  ┌─────────────────────┐  │
 │  │   WebUI (Axum)  │  │  MCP Service    │  │   Tool Registry     │  │
@@ -16,7 +16,7 @@
 │  │  ┌───────────┐  │  │  └──────────┘   │  │  │ execute_cmd   │  │  │
 │  │  │ execute_python│  │  │
 │  │  │ REST API  │  │  │                 │  │  │ calculator    │  │  │
-│  │  │ /api/*    │  │  │                 │  │  │ ... (21 tools)│  │  │
+│  │  │ /api/*    │  │  │                 │  │  │ ... (25 tools)│  │  │
 │  │  └───────────┘  │  │                 │  │  └───────────────┘  │  │
 │  │  ┌───────────┐  │  │                 │  │                     │  │
 │  │  │ SSE       │  │  │                 │  │                     │  │
@@ -35,6 +35,8 @@
 │  │  - Call stats   │  │  - Env vars     │  │  - Dangerous cmd    │  │
 │  │  - Concurrent   │  │  - Defaults     │  │  - Injection check  │  │
 │  │  - Pending cmds │  │  - Working dir  │  │  - Audit log        │  │
+│  │  - Tool presets │  │                 │  │                     │  │
+│  │  - Notes (mem)  │  │                 │  │                     │  │
 │  └─────────────────┘  └─────────────────┘  └─────────────────────┘  │
 └─────────────────────────────────────────────────────────────────────┘
 ```
@@ -55,6 +57,10 @@ The WebUI provides a modern control panel for managing the MCP server.
 - `GET /api/tool/{name}/stats` - Get tool statistics
 - `GET /api/tool/{name}/detail` - Get tool details
 - `POST /api/tool/{name}/enable` - Enable/disable tool
+- `POST /api/tools/batch-enable` - Batch enable/disable tools
+- `GET /api/tool-presets` - List tool presets
+- `GET /api/tool-presets/current` - Get active preset
+- `POST /api/tool-presets/apply/{name}` - Apply a preset
 - `GET /api/server-status` - Server runtime status
 - `GET /api/system-metrics` - Get real-time CPU, memory, and load metrics
 - `GET /api/version` - Get server version information
@@ -85,7 +91,7 @@ Implements the Model Context Protocol using the `rmcp` crate.
 
 ### Tool Registry
 
-21 built-in tools organized by category:
+25 built-in tools organized by category:
 
 #### File Operations (8 tools)
 | Tool | Description | Dangerous | Working Dir Restriction |
@@ -121,6 +127,18 @@ Implements the Model Context Protocol using the `rmcp` crate.
 | `datetime` | Get current date and time in China format | No |
 | `base64_codec` | Encode or decode base64 strings | No |
 | `hash_compute` | Compute hash (MD5, SHA1, SHA256) of string or file | No |
+
+#### Clipboard & Archive Tools (2 tools)
+| Tool | Description | Dangerous | Working Dir Restriction |
+|------|-------------|-----------|------------------------|
+| `clipboard` | Read or write system clipboard content (text or image) | No | No |
+| `archive` | Create, extract, list, or append ZIP archives | Yes | Yes |
+
+#### Diff & Note Tools (2 tools)
+| Tool | Description | Dangerous | Working Dir Restriction |
+|------|-------------|-----------|------------------------|
+| `diff` | Compare text, files, or directories with multiple output formats | No | Yes (file/dir modes) |
+| `note_storage` | In-memory temporary scratchpad for AI short-term memory | No | No |
 
 #### Network & Image Tools (2 tools)
 | Tool | Description | Dangerous | Working Dir Restriction |
@@ -235,13 +253,16 @@ Output Truncation (100KB limit)
 | Disabled Tools | `--disable-tools` | `MCP_DISABLE_TOOLS` | See below |
 | Dangerous Commands | `--allow-dangerous-commands` | `MCP_ALLOW_DANGEROUS_COMMANDS` | (none) |
 
-**Default Disabled Tools:**
-```
-file_write,file_ops,file_edit,http_request,datetime,
-execute_command,process_list,base64_codec,hash_compute,system_info,execute_python
-```
+**Tool Presets:**
+The server starts with the `minimal` preset by default (16 tools enabled, `execute_python` sandboxed). Available presets:
+- `minimal`: 16 tools, `execute_python` fs=false
+- `coding`: 23 tools, `execute_python` fs=true
+- `document`: 16 tools, `execute_python` fs=false
+- `data_analysis`: 18 tools, `execute_python` fs=true
+- `system_admin`: 20 tools, `execute_python` fs=true
+- `full_power`: 25 tools, `execute_python` fs=true
 
-The following 11 tools are enabled by default: `calculator`, `dir_list`, `file_read`, `file_search`, `image_read`, `file_stat`, `path_exists`, `json_query`, `git_ops`, `env_get`, `execute_python`. Dangerous tools (`execute_command`, `file_write`, `file_ops`, `file_edit`) are disabled by default.
+Use `--preset <name>` to set the startup preset, or `--preset none` to skip auto-applying.
 
 ## Technology Stack
 

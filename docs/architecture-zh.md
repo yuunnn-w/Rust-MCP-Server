@@ -4,7 +4,7 @@
 
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
-│                        Rust MCP Server v0.2.0                       │
+│                        Rust MCP Server v0.3.0                       │
 ├─────────────────────────────────────────────────────────────────────┤
 │  ┌─────────────────┐  ┌─────────────────┐  ┌─────────────────────┐  │
 │  │   WebUI (Axum)  │  │  MCP 服务       │  │   工具注册表        │  │
@@ -15,7 +15,7 @@
 │  │  ┌───────────┐  │  │  │ 传输层   │   │  │  │ file_write    │  │  │
 │  │  │ REST API  │  │  │  └──────────┘   │  │  │ execute_cmd   │  │  │
 │  │  │ /api/*    │  │  │                 │  │  │ calculator    │  │  │
-│  │  └───────────┘  │  │                 │  │  │ ... (20工具)  │  │  │
+│  │  └───────────┘  │  │                 │  │  │ ... (25工具)  │  │  │
 │  │  ┌───────────┐  │  │                 │  │  └───────────────┘  │  │
 │  │  │ SSE       │  │  │                 │  │                     │  │
 │  │  │ /events   │  │  │                 │  │                     │  │
@@ -32,6 +32,8 @@
 │  │  - 调用统计     │  │  - 环境变量     │  │  - 危险命令检查     │  │
 │  │  - 并发控制     │  │  - 默认值       │  │  - 注入检测         │  │
 │  │  - 待确认命令   │  │  - 工作目录     │  │  - 审计日志         │  │
+│  │  - 工具预设     │  │                 │  │                     │  │
+│  │  - 便签存储     │  │                 │  │                     │  │
 │  └─────────────────┘  └─────────────────┘  └─────────────────────┘  │
 └─────────────────────────────────────────────────────────────────────┘
 ```
@@ -52,6 +54,10 @@ WebUI 提供了一个现代化的控制面板来管理 MCP 服务器。
 - `GET /api/tool/{name}/stats` - 获取工具统计信息
 - `GET /api/tool/{name}/detail` - 获取工具详情
 - `POST /api/tool/{name}/enable` - 启用/禁用工具
+- `POST /api/tools/batch-enable` - 批量启用/禁用工具
+- `GET /api/tool-presets` - 列出工具预设
+- `GET /api/tool-presets/current` - 获取当前预设
+- `POST /api/tool-presets/apply/{name}` - 应用预设
 - `GET /api/server-status` - 服务器运行状态
 - `GET /api/system-metrics` - 获取实时 CPU、内存、负载指标
 - `GET /api/version` - 获取服务器版本信息
@@ -78,7 +84,7 @@ WebUI 提供了一个现代化的控制面板来管理 MCP 服务器。
 
 ### 工具注册表
 
-21 个内置工具，按类别组织：
+25 个内置工具，按类别组织：
 
 #### 文件操作类（8 个工具）
 | 工具名 | 描述 | 危险操作 | 工作目录限制 |
@@ -114,6 +120,18 @@ WebUI 提供了一个现代化的控制面板来管理 MCP 服务器。
 | `datetime` | 获取中国格式的当前日期时间 | 否 | 否 |
 | `base64_codec` | 编码或解码 base64 字符串 | 否 | 否 |
 | `hash_compute` | 计算字符串或文件的哈希值（MD5/SHA1/SHA256） | 否 | 否 |
+
+#### 剪贴板与归档类（2 个工具）
+| 工具名 | 描述 | 危险操作 | 工作目录限制 |
+|--------|------|----------|-------------|
+| `clipboard` | 读写系统剪贴板内容（文本或图片） | 否 | 否 |
+| `archive` | 创建、解压、列出或追加 ZIP 归档 | 是 | 是 |
+
+#### 差异比较与便签类（2 个工具）
+| 工具名 | 描述 | 危险操作 | 工作目录限制 |
+|--------|------|----------|-------------|
+| `diff` | 比较文本、文件或目录差异，支持多种输出格式 | 否 | 是（文件/目录模式） |
+| `note_storage` | AI 短期内存便签本，纯内存存储 | 否 | 否 |
 
 #### 网络与图像类（2 个工具）
 | 工具名 | 描述 | 危险操作 | 工作目录限制 |
@@ -228,13 +246,16 @@ WebUI 提供了一个现代化的控制面板来管理 MCP 服务器。
 | 禁用工具 | `--disable-tools` | `MCP_DISABLE_TOOLS` | 见下方 |
 | 危险命令 | `--allow-dangerous-commands` | `MCP_ALLOW_DANGEROUS_COMMANDS` | （无） |
 
-**默认禁用的工具：**
-```
-file_write,file_ops,file_edit,http_request,datetime,
-execute_command,process_list,base64_codec,hash_compute,system_info,execute_python
-```
+**工具预设：**
+服务器默认以 `minimal` 预设启动（启用 16 个工具，`execute_python` 处于沙箱模式）。可用预设：
+- `minimal`：16 个工具，`execute_python` 无文件系统访问
+- `coding`：23 个工具，`execute_python` 可文件系统访问
+- `document`：16 个工具，`execute_python` 无文件系统访问
+- `data_analysis`：18 个工具，`execute_python` 可文件系统访问
+- `system_admin`：20 个工具，`execute_python` 可文件系统访问
+- `full_power`：25 个工具，`execute_python` 可文件系统访问
 
-以下 11 个工具默认启用：`calculator`、`dir_list`、`file_read`、`file_search`、`image_read`、`file_stat`、`path_exists`、`json_query`、`git_ops`、`env_get`、`execute_python`。危险工具（`execute_command`、`file_write`、`file_ops`、`file_edit`）默认禁用。
+使用 `--preset <name>` 设置启动预设，或 `--preset none` 跳过自动应用。
 
 ## 技术栈
 

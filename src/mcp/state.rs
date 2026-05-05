@@ -1,4 +1,5 @@
 use crate::config::AppConfig;
+use crate::mcp::presets::get_preset;
 use crate::utils::system_metrics::{MetricsCollector, SystemMetrics};
 use dashmap::DashMap;
 use serde::{Deserialize, Serialize};
@@ -185,6 +186,33 @@ pub struct PendingCommand {
     pub timestamp: Instant,
 }
 
+/// A note stored in memory
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Note {
+    pub id: u64,
+    pub title: String,
+    pub content: String,
+    pub tags: Vec<String>,
+    pub category: String,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+impl Note {
+    pub fn new(id: u64, title: String, content: String, tags: Vec<String>, category: String) -> Self {
+        let now = chrono::Local::now().to_rfc3339();
+        Self {
+            id,
+            title,
+            content,
+            tags,
+            category,
+            created_at: now.clone(),
+            updated_at: now,
+        }
+    }
+}
+
 /// Shared server state
 pub struct ServerState {
     /// Tool status map
@@ -209,6 +237,16 @@ pub struct ServerState {
     pub metrics_collector: MetricsCollector,
     /// Whether execute_python tool has filesystem access enabled
     pub python_fs_access_enabled: RwLock<bool>,
+    /// Current active tool preset name
+    pub current_preset: RwLock<Option<String>>,
+    /// Custom system prompt appended to MCP instructions (sync RwLock for access from sync get_info)
+    pub system_prompt: std::sync::RwLock<Option<String>>,
+    /// In-memory notes storage
+    pub notes: DashMap<u64, Note>,
+    /// Last access time for notes (used for 30min auto-clear)
+    pub notes_last_access: RwLock<Instant>,
+    /// Next note ID auto-increment
+    pub notes_next_id: RwLock<u64>,
 }
 
 impl ServerState {
@@ -218,6 +256,7 @@ impl ServerState {
         let (tool_list_changed_tx, _) = broadcast::channel(100);
         let max_concurrency = config.max_concurrency;
 
+        let system_prompt = config.system_prompt.clone();
         Arc::new(Self {
             tool_status: DashMap::new(),
             concurrency_limiter: Semaphore::new(max_concurrency),
@@ -230,6 +269,11 @@ impl ServerState {
             pending_commands: RwLock::new(HashMap::new()),
             metrics_collector: MetricsCollector::new(),
             python_fs_access_enabled: RwLock::new(false),
+            current_preset: RwLock::new(None),
+            system_prompt: std::sync::RwLock::new(system_prompt),
+            notes: DashMap::new(),
+            notes_last_access: RwLock::new(Instant::now()),
+            notes_next_id: RwLock::new(1),
         })
     }
 
@@ -477,6 +521,234 @@ impl ServerState {
     pub fn collect_metrics(&self) -> SystemMetrics {
         self.metrics_collector.collect()
     }
+
+    // ===== Preset Management =====
+
+    /// Get current preset name
+    pub async fn get_current_preset(&self) -> Option<String> {
+        self.current_preset.read().await.clone()
+    }
+
+    /// Set current preset name
+    pub async fn set_current_preset(&self, preset: Option<String>) {
+        let mut guard = self.current_preset.write().await;
+        *guard = preset;
+    }
+
+    /// Get system prompt (sync, for use in get_info)
+    pub fn get_system_prompt_sync(&self) -> Option<String> {
+        self.system_prompt.read().ok().and_then(|g| g.clone())
+    }
+
+    /// Set system prompt
+    pub fn set_system_prompt(&self, prompt: Option<String>) {
+        if let Ok(mut guard) = self.system_prompt.write() {
+            *guard = prompt;
+        }
+    }
+
+    /// Apply a preset by name: enable tools in the preset, disable others
+    pub async fn apply_preset(&self, preset_name: &str) -> Result<(), String> {
+        let preset = get_preset(preset_name)
+            .ok_or_else(|| format!("Preset '{}' not found", preset_name))?;
+
+        let enabled_set: std::collections::HashSet<String> = preset.tools_enabled.iter().cloned().collect();
+
+        for mut entry in self.tool_status.iter_mut() {
+            let tool_name = entry.key().clone();
+            let should_enable = enabled_set.contains(&tool_name);
+            if entry.enabled != should_enable {
+                entry.enabled = should_enable;
+                let _ = self.status_tx.send(StatusUpdate::ToolEnabled {
+                    tool: tool_name.clone(),
+                    enabled: should_enable,
+                });
+            }
+        }
+
+        let _ = self.tool_list_changed_tx.send(ToolListChangedSignal);
+        self.set_current_preset(Some(preset_name.to_string())).await;
+        self.set_python_fs_access_enabled(preset.python_fs_access_enabled).await;
+        info!("Applied preset '{}'", preset_name);
+        Ok(())
+    }
+
+    // ===== Note Management =====
+
+    const NOTE_MAX_COUNT: usize = 100;
+    const NOTE_MAX_CONTENT_LEN: usize = 50_000;
+    const NOTE_MAX_TITLE_LEN: usize = 200;
+    const NOTE_MAX_TAGS: usize = 10;
+    const NOTE_MAX_TAG_LEN: usize = 50;
+    const NOTE_TIMEOUT_MINUTES: u64 = 30;
+
+    /// Check if notes have expired (30min inactivity) and clear if so
+    pub async fn check_notes_timeout(&self) {
+        let last_access = *self.notes_last_access.read().await;
+        if last_access.elapsed() > Duration::from_secs(Self::NOTE_TIMEOUT_MINUTES * 60) {
+            let count = self.notes.len();
+            if count > 0 {
+                self.notes.clear();
+                let mut next_id = self.notes_next_id.write().await;
+                *next_id = 1;
+                info!("Notes expired after {}min inactivity, cleared {} notes", Self::NOTE_TIMEOUT_MINUTES, count);
+            }
+        }
+    }
+
+    /// Touch notes last access time
+    pub async fn touch_notes_access(&self) {
+        let mut guard = self.notes_last_access.write().await;
+        *guard = Instant::now();
+    }
+
+    /// Create a new note
+    pub async fn note_create(&self, title: String, content: String, tags: Vec<String>, category: String) -> Result<Note, String> {
+        self.check_notes_timeout().await;
+        self.touch_notes_access().await;
+
+        if self.notes.len() >= Self::NOTE_MAX_COUNT {
+            return Err(format!("Maximum {} notes reached. Delete some notes first.", Self::NOTE_MAX_COUNT));
+        }
+        if title.len() > Self::NOTE_MAX_TITLE_LEN {
+            return Err(format!("Title too long: max {} characters", Self::NOTE_MAX_TITLE_LEN));
+        }
+        let content = if content.len() > Self::NOTE_MAX_CONTENT_LEN {
+            let mut truncated = content[..Self::NOTE_MAX_CONTENT_LEN].to_string();
+            truncated.push_str("...[truncated]");
+            truncated
+        } else {
+            content
+        };
+        let tags: Vec<String> = tags.into_iter()
+            .filter(|t| !t.is_empty() && t.len() <= Self::NOTE_MAX_TAG_LEN)
+            .take(Self::NOTE_MAX_TAGS)
+            .collect();
+
+        let id = {
+            let mut next_id = self.notes_next_id.write().await;
+            let id = *next_id;
+            *next_id += 1;
+            id
+        };
+
+        let note = Note::new(id, title, content, tags, category);
+        self.notes.insert(id, note.clone());
+        Ok(note)
+    }
+
+    /// List notes with optional filtering
+    pub async fn note_list(&self, tag_filter: Option<String>, category_filter: Option<String>) -> Vec<Note> {
+        self.check_notes_timeout().await;
+        self.touch_notes_access().await;
+
+        let mut notes: Vec<Note> = self.notes.iter()
+            .map(|e| e.value().clone())
+            .filter(|n| {
+                if let Some(ref tag) = tag_filter {
+                    if !n.tags.contains(tag) { return false; }
+                }
+                if let Some(ref cat) = category_filter {
+                    if n.category != *cat { return false; }
+                }
+                true
+            })
+            .collect();
+        notes.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+        notes
+    }
+
+    /// Read a note by ID
+    pub async fn note_read(&self, id: u64) -> Option<Note> {
+        self.check_notes_timeout().await;
+        self.touch_notes_access().await;
+        self.notes.get(&id).map(|e| e.value().clone())
+    }
+
+    /// Update a note
+    pub async fn note_update(&self, id: u64, title: Option<String>, content: Option<String>, tags: Option<Vec<String>>, category: Option<String>) -> Result<Note, String> {
+        self.check_notes_timeout().await;
+        self.touch_notes_access().await;
+
+        match self.notes.get_mut(&id) {
+            Some(mut note) => {
+                if let Some(t) = title {
+                    if t.len() > Self::NOTE_MAX_TITLE_LEN {
+                        return Err(format!("Title too long: max {} characters", Self::NOTE_MAX_TITLE_LEN));
+                    }
+                    note.title = t;
+                }
+                if let Some(c) = content {
+                    note.content = if c.len() > Self::NOTE_MAX_CONTENT_LEN {
+                        let mut truncated = c[..Self::NOTE_MAX_CONTENT_LEN].to_string();
+                        truncated.push_str("...[truncated]");
+                        truncated
+                    } else {
+                        c
+                    };
+                }
+                if let Some(t) = tags {
+                    note.tags = t.into_iter()
+                        .filter(|t| !t.is_empty() && t.len() <= Self::NOTE_MAX_TAG_LEN)
+                        .take(Self::NOTE_MAX_TAGS)
+                        .collect();
+                }
+                if let Some(c) = category {
+                    note.category = c;
+                }
+                note.updated_at = chrono::Local::now().to_rfc3339();
+                Ok(note.clone())
+            }
+            None => Err(format!("Note {} not found", id)),
+        }
+    }
+
+    /// Delete a note
+    pub async fn note_delete(&self, id: u64) -> Result<(), String> {
+        self.check_notes_timeout().await;
+        self.touch_notes_access().await;
+
+        if self.notes.remove(&id).is_some() {
+            Ok(())
+        } else {
+            Err(format!("Note {} not found", id))
+        }
+    }
+
+    /// Search notes by keyword in title or content
+    pub async fn note_search(&self, query: &str) -> Vec<Note> {
+        self.check_notes_timeout().await;
+        self.touch_notes_access().await;
+
+        let q = query.to_lowercase();
+        let mut notes: Vec<Note> = self.notes.iter()
+            .map(|e| e.value().clone())
+            .filter(|n| n.title.to_lowercase().contains(&q) || n.content.to_lowercase().contains(&q))
+            .collect();
+        notes.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+        notes
+    }
+
+    /// Append content to a note
+    pub async fn note_append(&self, id: u64, append_content: &str) -> Result<Note, String> {
+        self.check_notes_timeout().await;
+        self.touch_notes_access().await;
+
+        match self.notes.get_mut(&id) {
+            Some(mut note) => {
+                note.content.push('\n');
+                note.content.push_str(append_content);
+                if note.content.len() > Self::NOTE_MAX_CONTENT_LEN {
+                    let mut truncated = note.content[..Self::NOTE_MAX_CONTENT_LEN].to_string();
+                    truncated.push_str("...[truncated]");
+                    note.content = truncated;
+                }
+                note.updated_at = chrono::Local::now().to_rfc3339();
+                Ok(note.clone())
+            }
+            None => Err(format!("Note {} not found", id)),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -498,6 +770,8 @@ mod tests {
             allow_dangerous_commands: vec![],
             allowed_hosts: None,
             disable_allowed_hosts: false,
+            preset: "minimal".to_string(),
+            system_prompt: None,
         }
     }
 

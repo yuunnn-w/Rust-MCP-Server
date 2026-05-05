@@ -40,7 +40,11 @@ Rust MCP Server 实现了多层安全机制，在为 AI 助手提供强大功能
 
 ### 1. 工作目录限制
 
-写操作工具（file_write、file_ops、file_edit、execute_command、execute_python）被限制在可配置的工作目录内，防止未授权修改敏感系统文件。只读工具（dir_list、file_read、file_search、file_stat、path_exists、json_query、git_ops、image_read、hash_compute）可以访问文件系统中的任意路径。
+写操作工具（file_write、file_ops、file_edit、execute_command、execute_python、archive、diff）被限制在可配置的工作目录内，防止未授权修改敏感系统文件。只读工具（dir_list、file_read、file_search、file_stat、path_exists、json_query、git_ops、image_read、hash_compute、clipboard、note_storage）可以访问文件系统中的任意路径。
+
+**`archive` 安全说明**：归档工具会校验所有源路径、目标路径和归档路径是否在工作目录内。解压出的文件无法逃逸出工作目录。
+
+**`note_storage` 安全说明**：便签完全存储在内存中，30 分钟无操作后自动清空。不会持久化到磁盘，也无法在服务器重启后保留。此工具设计为 AI 短期推理的草稿本，而非长期存储。
 
 **工作原理：**
 1. 写操作的所有路径被规范化为绝对路径
@@ -234,8 +238,8 @@ RUST_LOG=debug ./rust-mcp-server
 
 ## 工具分类
 
-### 安全工具（17个）
-这些工具默认启用是安全的。只读文件工具不受工作目录限制：
+### 安全工具
+以下工具大多属于只读或非破坏性操作，使用相对安全。`minimal` 预设默认启用其中 16 个。只读文件工具不受工作目录限制：
 - `calculator` - 数学计算
 - `dir_list` - 目录列表（不受工作目录限制）
 - `file_read` - 文件读取（不受工作目录限制）
@@ -253,13 +257,17 @@ RUST_LOG=debug ./rust-mcp-server
 - `git_ops` - Git 仓库只读操作（不受工作目录限制）
 - `process_list` - 系统进程列表
 - `execute_python` - Python 代码执行。所有 Python 标准库模块均可使用。文件系统访问可通过 WebUI 切换。
+- `clipboard` - 读写系统剪贴板内容（文本或图片）
+- `diff` - 比较文本、文件或目录差异（只读操作，文件/目录模式限制在工作目录内）
+- `note_storage` - AI 短期内存便签本（30 分钟无操作自动清空）
 
-### 危险工具（4个）
+### 危险工具（5个）
 这些工具默认禁用，需要谨慎使用：
 - `file_write` - 文件写入（可能覆盖数据，限制在工作目录内，100MB 限制）
 - `file_ops` - 复制、移动、删除或重命名文件（限制在工作目录内）
 - `file_edit` - 多模式文件编辑（可能修改文件，限制在工作目录内）
-- `execute_command` - Shell 命令执行（具备注入检测和两步确认）
+- `execute_command` - Shell 命令执行（具备注入检测、两步确认和自定义 shell 路径支持）
+- `archive` - ZIP 归档创建/解压（限制在工作目录内）
 
 ## 最佳实践
 
@@ -275,10 +283,14 @@ RUST_LOG=debug ./rust-mcp-server
 
 2. **默认工具策略**
    ```bash
-   # 从最小工具集开始
-   ./rust-mcp-server --disable-tools file_write,file_ops,file_edit,execute_command,http_request
+   # 使用 minimal 预设启动（默认）
+   ./rust-mcp-server --preset minimal
+   
+   # 使用更严格的预设或不应用预设
+   ./rust-mcp-server --preset none
    ```
-   - 按需启用工具
+   - `minimal` 预设仅启用安全的只读工具（16 个）
+   - 仅在需要时切换到更高预设（`coding`、`system_admin`、`full_power`）
    - 仅在受信任环境中启用 `execute_command`
 
 3. **定期审查审计日志**

@@ -34,7 +34,9 @@ Rust MCP Server is a high-performance [Model Context Protocol (MCP)](https://mod
 ## Features
 
 ### Core Features
-- **21 Built-in Tools**: File operations, HTTP requests, calculations, system info, base64 codec, git operations, JSON queries, Python execution, and more
+- **25 Built-in Tools**: File operations, HTTP requests, calculations, system info, base64 codec, git operations, JSON queries, Python execution, clipboard, archive, diff, note storage, and more
+- **Tool Presets**: 6 built-in presets (minimal, coding, document, data_analysis, system_admin, full_power) for one-click tool configuration
+- **System Prompt**: Custom instructions appended to MCP `initialize` response via `--system-prompt` or WebUI
 - **WebUI Control Panel**: Cyberpunk AI Command Center theme with glassmorphism HUD, animated background, terminal log stream, and 3D card tilt effects
 - **Real-time Updates**: SSE-based live status updates in WebUI
 - **System Metrics**: Real-time CPU, memory, and load monitoring via HUD and `/api/system-metrics` endpoint
@@ -76,7 +78,7 @@ The following write operations are **restricted** to the working directory:
 #### System & Network Tools
 | Tool | Description | Default Status |
 |------|-------------|----------------|
-| `execute_command` | Execute shell commands with safety checks and shell selection | Disabled |
+| `execute_command` | Execute shell commands with safety checks, shell selection, and custom shell path support | Disabled |
 | `process_list` | List system processes | Disabled |
 | `system_info` | Get system information | Disabled |
 | `http_request` | Make HTTP GET/POST requests | Disabled |
@@ -91,6 +93,10 @@ The following write operations are **restricted** to the working directory:
 | `datetime` | Get current date/time (local timezone) |
 | `base64_codec` | Encode/decode base64 |
 | `hash_compute` | Compute MD5/SHA1/SHA256 hashes |
+| `clipboard` | Read/write system clipboard (text and images) |
+| `archive` | Create, extract, list, append ZIP archives |
+| `diff` | Compare text, files, or directories with multiple output formats |
+| `note_storage` | AI short-term memory scratchpad (auto-clears after 30min) |
 
 ## Quick Start
 
@@ -165,16 +171,23 @@ http://127.0.0.1:2233
 | `--mcp-port` | `MCP_PORT` | `3344` | MCP service port |
 | `--max-concurrency` | `MCP_MAX_CONCURRENCY` | `10` | Max concurrent calls |
 | `--working-dir` | `MCP_WORKING_DIR` | `.` | Working directory for file ops |
-| `--disable-tools` | `MCP_DISABLE_TOOLS` | See below | Tools to disable (11 tools disabled by default) |
+| `--preset` | `MCP_PRESET` | `minimal` | Startup tool preset: minimal/coding/document/data_analysis/system_admin/full_power/none |
+| `--system-prompt` | `MCP_SYSTEM_PROMPT` | - | Custom system prompt appended to MCP instructions |
+| `--disable-tools` | `MCP_DISABLE_TOOLS` | See below | Tools to disable on top of preset |
 | `--allow-dangerous-commands` | `MCP_ALLOW_DANGEROUS_COMMANDS` | - | Allow dangerous command IDs |
 | `--log-level` | `MCP_LOG_LEVEL` | `info` | Log level: trace/debug/info/warn/error |
 | `--disable-webui` | - | - | Disable WebUI panel |
 | `--allowed-hosts` | `MCP_ALLOWED_HOSTS` | - | Custom allowed Host headers (comma-separated) |
 | `--disable-allowed-hosts` | `MCP_DISABLE_ALLOWED_HOSTS` | - | Disable DNS rebinding protection (not recommended for public) |
 
-**Default Tool Status:**
-- **Enabled by default (11):** `calculator`, `dir_list`, `file_read`, `file_search`, `image_read`, `file_stat`, `path_exists`, `json_query`, `git_ops`, `env_get`, `execute_python`
-- **Disabled by default (10):** `file_write`, `file_ops`, `file_edit`, `http_request`, `datetime`, `execute_command`, `process_list`, `base64_codec`, `hash_compute`, `system_info`
+**Tool Presets:**
+The server starts with the `minimal` preset by default. Use `--preset <name>` to choose a different preset, or `--preset none` to skip auto-applying.
+- **minimal** (16 tools): Safe read-only tools + sandboxed Python
+- **coding** (23 tools): Development-focused, includes file editing and command execution
+- **document** (16 tools): Document processing, includes file writing and clipboard
+- **data_analysis** (18 tools): Data analysis, includes calculator, Python, and diff
+- **system_admin** (20 tools): System administration, includes system info and process list
+- **full_power** (25 tools): All tools enabled
 
 ### Dangerous Command IDs
 

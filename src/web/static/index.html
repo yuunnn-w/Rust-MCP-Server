@@ -153,6 +153,18 @@
                 <h3 id="config-section-title">系统配置</h3>
                 <div class="config-grid" id="config-grid"></div>
             </div>
+            <div class="preset-section">
+                <h3 id="preset-section-title">工具预设</h3>
+                <div class="preset-current" id="preset-current">当前: 无</div>
+                <div class="preset-grid" id="preset-grid"></div>
+            </div>
+            <div class="batch-actions">
+                <h3 id="batch-section-title">批量操作</h3>
+                <div class="batch-btn-group">
+                    <button class="btn btn-primary" id="batch-enable-all">全部启用</button>
+                    <button class="btn btn-warning" id="batch-disable-all">全部禁用</button>
+                </div>
+            </div>
             <div class="config-actions">
                 <button class="btn btn-primary" id="edit-config-btn">编辑配置</button>
                 <button class="btn btn-warning" id="restart-btn">重启服务器</button>
@@ -279,7 +291,7 @@
                         </div>
                     </div>
                     <h2 class="about-name">Rust MCP Server</h2>
-                    <div class="about-version" id="about-version">v0.2.0</div>
+                    <div class="about-version" id="about-version">v0.3.0</div>
                     <p class="about-desc" id="about-desc">A high-performance Model Context Protocol (MCP) server with WebUI control panel.</p>
                     <div class="about-meta">
                         <div class="about-meta-item">

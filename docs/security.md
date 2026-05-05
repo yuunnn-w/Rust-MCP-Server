@@ -40,7 +40,11 @@ Rust MCP Server implements multiple layers of security to protect against malici
 
 ### 1. Working Directory Restriction
 
-Write operations (file_write, file_ops, file_edit, execute_command, execute_python) are restricted to a configurable working directory to prevent unauthorized modification of sensitive system files. Read-only tools (dir_list, file_read, file_search, file_stat, path_exists, json_query, git_ops, image_read, hash_compute) can access any path on the filesystem.
+Write operations (file_write, file_ops, file_edit, execute_command, execute_python, archive, diff) are restricted to a configurable working directory to prevent unauthorized modification of sensitive system files. Read-only tools (dir_list, file_read, file_search, file_stat, path_exists, json_query, git_ops, image_read, hash_compute, clipboard, note_storage) can access any path on the filesystem.
+
+**Note on `archive`**: The archive tool validates all source paths, destination paths, and archive paths against the working directory. Extracted files cannot escape the working directory.
+
+**Note on `note_storage`**: Notes are stored purely in memory and automatically cleared after 30 minutes of inactivity. They are not persisted to disk and cannot survive server restarts. This is designed as a short-term scratchpad for AI reasoning, not long-term storage.
 
 **How it works:**
 1. All paths for write operations are canonicalized to absolute form
@@ -234,8 +238,8 @@ The `http_request` tool includes server-side request forgery protections.
 
 ## Tool Classification
 
-### Safe Tools (17)
-These tools are safe to enable by default. Read-only file tools are not restricted to the working directory:
+### Safe Tools
+These tools are generally safe (read-only or non-destructive). The `minimal` preset enables 16 of them by default. Read-only file tools are not restricted to the working directory:
 - `calculator` - Mathematical calculations
 - `dir_list` - Directory listing (no working directory restriction)
 - `file_read` - File reading (no working directory restriction)
@@ -253,13 +257,17 @@ These tools are safe to enable by default. Read-only file tools are not restrict
 - `git_ops` - Git repository read-only operations (no working directory restriction)
 - `process_list` - System process listing
 - `execute_python` - Python code execution. All standard library modules are available. Filesystem access is toggleable via WebUI.
+- `clipboard` - Read/write system clipboard content (text or image)
+- `diff` - Compare text, files, or directories (read-only, file/dir modes restricted to working directory)
+- `note_storage` - In-memory temporary scratchpad for AI short-term memory (auto-clears after 30min)
 
-### Dangerous Tools (4)
+### Dangerous Tools (5)
 These tools require caution and are disabled by default:
 - `file_write` - File writing (can overwrite data, restricted to working directory, 100MB limit)
 - `file_ops` - Copy, move, delete, or rename files (restricted to working directory)
 - `file_edit` - Multi-mode file editing (can modify files, restricted to working directory)
-- `execute_command` - Shell command execution (with injection detection and two-step confirmation)
+- `execute_command` - Shell command execution (with injection detection, two-step confirmation, and custom shell path support)
+- `archive` - ZIP archive creation/extraction (restricted to working directory)
 
 ## Best Practices
 
@@ -275,10 +283,14 @@ These tools require caution and are disabled by default:
 
 2. **Default Tool Policy**
    ```bash
-   # Start with minimal tools
-   ./rust-mcp-server --disable-tools file_write,file_ops,file_edit,execute_command,http_request
+   # Start with minimal preset (default)
+   ./rust-mcp-server --preset minimal
+   
+   # Use a more restrictive preset or none
+   ./rust-mcp-server --preset none
    ```
-   - Only enable tools as needed
+   - The `minimal` preset enables only safe, read-only tools (16 tools)
+   - Only switch to higher presets (`coding`, `system_admin`, `full_power`) as needed
    - Enable `execute_command` only in trusted environments
 
 3. **Review Audit Logs Regularly**

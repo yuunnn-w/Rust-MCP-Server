@@ -51,6 +51,15 @@ async fn main() -> anyhow::Result<()> {
             let tool_count = tools.len();
             state.init_tools(tools).await;
             
+            // Apply default preset on startup
+            if config.preset != "none" {
+                if let Err(e) = state.apply_preset(&config.preset).await {
+                    error!("Failed to apply preset '{}': {}", config.preset, e);
+                } else {
+                    info!("Applied preset '{}' on startup", config.preset);
+                }
+            }
+            
             info!("Starting MCP server with {} tools", tool_count);
             
             // Start MCP service
