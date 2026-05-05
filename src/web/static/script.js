@@ -588,6 +588,15 @@ class CommandCenter {
     // 3D CARD TILT
     // ============================================================
     bindCardTilt(card) {
+        let rafId = null;
+        let targetTransform = '';
+        const applyTransform = () => {
+            if (targetTransform) {
+                card.style.transform = targetTransform;
+                card.style.transition = 'transform 0.1s ease-out';
+            }
+            rafId = null;
+        };
         card.addEventListener('mousemove', (e) => {
             const rect = card.getBoundingClientRect();
             const x = e.clientX - rect.left;
@@ -596,10 +605,17 @@ class CommandCenter {
             const cy = rect.height / 2;
             const dx = (x - cx) / cx;
             const dy = (y - cy) / cy;
-            card.style.transform = `perspective(800px) rotateY(${dx * 5}deg) rotateX(${-dy * 5}deg) translateZ(8px)`;
-            card.style.transition = 'transform 0.1s ease-out';
+            targetTransform = `perspective(800px) rotateY(${dx * 5}deg) rotateX(${-dy * 5}deg) translateZ(8px)`;
+            if (!rafId) {
+                rafId = requestAnimationFrame(applyTransform);
+            }
         });
         card.addEventListener('mouseleave', () => {
+            if (rafId) {
+                cancelAnimationFrame(rafId);
+                rafId = null;
+            }
+            targetTransform = '';
             card.style.transform = 'perspective(800px) rotateY(0) rotateX(0) translateZ(0)';
             card.style.transition = 'transform 0.3s ease-out';
         });
@@ -1132,6 +1148,15 @@ class CommandCenter {
     // ============================================================
     t(key) { return this.i18n[this.lang][key] || key; }
 
+    // Convert snake_case to camelCase for i18n key lookup
+    toCamelCase(s) { return s.replace(/_([a-z])/g, (_, ch) => ch.toUpperCase()); }
+
+    // Translate a preset name (e.g. 'data_analysis' -> '数据分析')
+    translatePresetName(name) {
+        const key = 'presetName' + this.toCamelCase(name.charAt(0).toUpperCase() + name.slice(1));
+        return this.i18n[this.lang][key] || name;
+    }
+
     escapeHtml(str) {
         const div = document.createElement('div');
         div.textContent = str;
@@ -1184,11 +1209,11 @@ class CommandCenter {
         const currentEl = document.getElementById('preset-current');
         if (!grid) return;
         if (currentEl) {
-            currentEl.textContent = `${this.t('presetCurrent')}: ${this.currentPreset || this.t('presetNone')}`;
+            const currentName = this.currentPreset ? this.translatePresetName(this.currentPreset) : this.t('presetNone');
+            currentEl.textContent = `${this.t('presetCurrent')}: ${currentName}`;
         }
         grid.innerHTML = this.presets.map(p => {
-            const nameKey = 'presetName' + p.name.charAt(0).toUpperCase() + p.name.slice(1);
-            const name = this.t(nameKey) || p.name;
+            const name = this.translatePresetName(p.name);
             const countText = this.t('presetToolsCount').replace('{count}', p.tool_count);
             return `
             <button class="preset-btn ${this.currentPreset === p.name ? 'active' : ''}" data-preset="${p.name}">
@@ -1372,7 +1397,10 @@ class CommandCenter {
         if (batchDisableAll) batchDisableAll.textContent = this.t('batchDisableAll');
 
         const presetCurrent = document.getElementById('preset-current');
-        if (presetCurrent) presetCurrent.textContent = `${this.t('presetCurrent')}: ${this.currentPreset || this.t('presetNone')}`;
+        if (presetCurrent) {
+            const currentName = this.currentPreset ? this.translatePresetName(this.currentPreset) : this.t('presetNone');
+            presetCurrent.textContent = `${this.t('presetCurrent')}: ${currentName}`;
+        }
 
         const configTitle = document.getElementById('config-modal-title');
         if (configTitle) configTitle.textContent = this.t('configTitle');
