@@ -77,7 +77,7 @@ footer (可选)
 
 示例：
 ```
-feat(tools): 添加 file_search 工具
+feat(tools): 添加 Grep 工具
 
 添加用于在文件和目录中搜索关键词的新工具。
 实现了带深度限制的递归搜索。

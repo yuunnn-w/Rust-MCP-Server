@@ -14,8 +14,8 @@ Get all tools with their current status.
 {
   "tools": [
     {
-      "name": "file_read",
-      "description": "Read text file content with line range support. Not restricted to working directory.",
+      "name": "Read",
+      "description": "Read file with mode system: auto/text/media for generic files, doc_text/doc_with_images/doc_images for DOC/DOCX, ppt_text/ppt_images for PPT/PPTX, pdf_text/pdf_images for PDF. Image modes return base64 image content for vision models. Supports image_dpi, image_format. Not restricted to working directory.",
       "enabled": true,
       "call_count": 42,
       "is_calling": false,
@@ -23,8 +23,8 @@ Get all tools with their current status.
       "is_dangerous": false
     },
     {
-      "name": "execute_command",
-      "description": "Execute shell command in specified directory (restricted to working directory)",
+      "name": "Bash",
+      "description": "Execute shell command with optional working_dir, stdin, max_output_chars, and async_mode. Use Monitor tool for async commands.",
       "enabled": false,
       "call_count": 5,
       "is_calling": false,
@@ -32,8 +32,8 @@ Get all tools with their current status.
       "is_dangerous": true
     },
     {
-      "name": "clipboard",
-      "description": "Read or write system clipboard content (text or image)",
+      "name": "Clipboard",
+      "description": "Read or write system clipboard content. Supports read_text, write_text, read_image, and clear operations.",
       "enabled": true,
       "call_count": 0,
       "is_calling": false,
@@ -41,8 +41,8 @@ Get all tools with their current status.
       "is_dangerous": false
     },
     {
-      "name": "archive",
-      "description": "Create, extract, list, or append ZIP archives",
+      "name": "Archive",
+      "description": "Create, extract, list, or append ZIP archives with AES-256 password encryption",
       "enabled": false,
       "call_count": 0,
       "is_calling": false,
@@ -50,7 +50,7 @@ Get all tools with their current status.
       "is_dangerous": true
     },
     {
-      "name": "diff",
+      "name": "Diff",
       "description": "Compare text, files, or directories with multiple output formats",
       "enabled": true,
       "call_count": 0,
@@ -59,8 +59,8 @@ Get all tools with their current status.
       "is_dangerous": false
     },
     {
-      "name": "note_storage",
-      "description": "In-memory temporary scratchpad for AI short-term memory",
+      "name": "NoteStorage",
+      "description": "AI assistant's short-term memory scratchpad with CRUD, search, export/import JSON. Notes auto-expire after 30 minutes of inactivity.",
       "enabled": true,
       "call_count": 0,
       "is_calling": false,
@@ -86,7 +86,7 @@ Get detailed statistics for a specific tool.
 **Response:**
 ```json
 {
-  "name": "file_read",
+  "name": "Read",
   "total_calls": 42,
   "recent_calls_15min": 5,
   "stats_history": [0, 1, 2, 3, 2, 1, 0, 0, 0, 0],
@@ -107,7 +107,7 @@ Get detailed information about a tool.
 **Response:**
 ```json
 {
-  "name": "file_read",
+  "name": "Read",
   "description": "Read text file content with line range support",
   "usage": "Usage: Provide a 'path' parameter with optional 'start_line' and 'end_line'...",
   "enabled": true,
@@ -129,7 +129,7 @@ Enable or disable a tool.
 ```json
 {
   "success": true,
-  "tool": "file_read",
+  "tool": "Read",
   "enabled": false
 }
 ```
@@ -140,7 +140,7 @@ Enable or disable multiple tools at once.
 **Request:**
 ```json
 {
-  "tools": ["file_read", "file_write", "execute_command"],
+  "tools": ["Read", "Write", "Bash"],
   "enabled": true
 }
 ```
@@ -150,7 +150,7 @@ Enable or disable multiple tools at once.
 {
   "success": true,
   "enabled": true,
-  "changed": ["file_read", "file_write", "execute_command"],
+  "changed": ["Read", "Write", "Bash"],
   "failed": []
 }
 ```
@@ -165,33 +165,33 @@ Get all available tool presets.
 [
   {
     "name": "minimal",
-    "description": "Minimal safe mode",
-    "tool_count": 16
+    "description": "Minimal safe mode: read-only, computation, and sandboxed Python tools only",
+    "tool_count": 9
   },
   {
     "name": "coding",
-    "description": "Coding & development",
-    "tool_count": 23
-  },
-  {
-    "name": "document",
-    "description": "Document processing",
-    "tool_count": 16
-  },
-  {
-    "name": "data_analysis",
-    "description": "Data analysis",
-    "tool_count": 18
-  },
-  {
-    "name": "system_admin",
-    "description": "System administration",
+    "description": "Coding & development: full file operations, git, commands, Python with FS access, HTTP, clipboard, archive, task management",
     "tool_count": 20
   },
   {
+    "name": "data_analysis",
+    "description": "Data analysis: Python with FS access, web tools, HTTP, file reading/writing, Diff, Archive, NotebookEdit",
+    "tool_count": 15
+  },
+  {
+    "name": "system_admin",
+    "description": "System administration: system info, processes, commands, Python with FS access, file operations, archive, Monitor",
+    "tool_count": 20
+  },
+  {
+    "name": "research",
+    "description": "Research & documentation: web search, content fetching, file reading, notes, task tracking, user elicitation, NotebookEdit",
+    "tool_count": 10
+  },
+  {
     "name": "full_power",
-    "description": "All tools enabled",
-    "tool_count": 25
+    "description": "Full power: all 21 tools enabled",
+    "tool_count": 21
   }
 ]
 ```
@@ -219,12 +219,12 @@ Apply a tool preset. This atomically enables/disables tools according to the pre
 ```
 
 **Available presets:**
-- `minimal`: Safe read-only tools + sandboxed Python (16 tools, `execute_python` fs=false)
-- `coding`: Development-focused tools including file editing and command execution (23 tools, `execute_python` fs=true)
-- `document`: Document processing tools including file writing and clipboard (16 tools, `execute_python` fs=false)
-- `data_analysis`: Data analysis tools including calculator, Python, and diff (18 tools, `execute_python` fs=true)
-- `system_admin`: System administration tools including system info, process list, and command execution (20 tools, `execute_python` fs=true)
-- `full_power`: All 25 tools enabled (`execute_python` fs=true)
+- `minimal`: Safe read-only tools + sandboxed Python (9 tools, `ExecutePython` fs=false)
+- `coding`: Development-focused tools including file editing, task management, and command execution (20 tools, `ExecutePython` fs=true)
+- `data_analysis`: Data analysis tools including Python, Diff, Archive, and web tools (15 tools, `ExecutePython` fs=true)
+- `system_admin`: System administration tools including system info, processes, commands, and file operations (20 tools, `ExecutePython` fs=true)
+- `research`: Research & documentation tools including web search, web fetch, and file reading (10 tools, `ExecutePython` fs=false)
+- `full_power`: All 21 tools enabled (`ExecutePython` fs=true)
 
 ### Server Status
 
@@ -282,8 +282,8 @@ Update configuration (limited options).
 ```json
 {
   "success": true,
-  "message": "Configuration updated successfully",
-  "changes": ["max_concurrency"],
+  "message": "Configuration updated.",
+  "changes": ["max_concurrency: 20"],
   "restart_required": false
 }
 ```
@@ -334,52 +334,53 @@ Get real-time system resource usage.
 ### MCP Service Control
 
 #### POST /api/mcp/start
-Start MCP service.
+Toggle the `mcp_running` state flag to `true`. This does not actually start a new MCP process; a full restart requires an external process manager.
 
 **Response:**
 ```json
 {
   "success": true,
-  "message": "MCP service started"
+  "message": "MCP service status set to running. Note: full restart requires process manager."
 }
 ```
 
 #### POST /api/mcp/stop
-Stop MCP service.
+Toggle the `mcp_running` state flag to `false`. This does not actually stop the underlying MCP process; a full restart requires an external process manager.
 
 **Response:**
 ```json
 {
   "success": true,
-  "message": "MCP service stopped"
+  "message": "MCP service status set to stopped. Note: full shutdown requires process manager."
 }
 ```
 
 #### POST /api/mcp/restart
-Restart MCP service.
+Toggle the `mcp_running` state flag (off then on). This does not actually restart the underlying MCP process; a full restart requires an external process manager.
 
 **Response:**
 ```json
 {
   "success": true,
-  "message": "MCP service restarted"
+  "message": "MCP service status restarted. Note: for a full restart, please use your process manager."
 }
 ```
 
 ### Python Filesystem Access Toggle
 
 #### GET /api/python-fs-access
-Get the current filesystem access status for the `execute_python` tool.
+Get the current filesystem access status for the `ExecutePython` tool.
 
 **Response:**
 ```json
 {
+  "success": true,
   "enabled": false
 }
 ```
 
 #### POST /api/python-fs-access
-Enable or disable filesystem access for the `execute_python` tool.
+Enable or disable filesystem access for the `ExecutePython` tool.
 
 **Request:**
 ```json
@@ -396,7 +397,7 @@ Enable or disable filesystem access for the `execute_python` tool.
 }
 ```
 
-**Note:** When filesystem access is disabled (default), `execute_python` runs in sandbox mode where `builtins.open`, `_io.FileIO`, and `os`/`nt`/`posix` modules are blocked. When enabled, Python code can access files within the configured working directory.
+**Note:** When filesystem access is disabled (default), `ExecutePython` runs in sandbox mode where `builtins.open`, `_io.FileIO`, and `os`/`nt`/`posix` modules are blocked. When enabled, Python code can access files within the configured working directory.
 
 ### Search
 
@@ -405,7 +406,7 @@ Search tools by name or description.
 
 **Response:**
 ```json
-["file_read", "file_search", "dir_list"]
+["Read","Grep","Glob"]
 ```
 
 ### Version Information
@@ -417,7 +418,7 @@ Get server version and metadata.
 ```json
 {
   "name": "rust-mcp-server",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "A high-performance MCP server with WebUI control panel",
   "authors": "MCP Server Team",
   "repository": "https://github.com/yuunnn-w/Rust-MCP-Server",
@@ -438,7 +439,7 @@ Triggered when a tool's call count changes.
 ```json
 {
   "type": "ToolCallCount",
-  "tool": "file_read",
+  "tool": "Read",
   "count": 42,
   "isCalling": false,
   "isBusy": false
@@ -510,11 +511,13 @@ Response:
   "result": {
     "tools": [
       {
-        "name": "file_read",
-        "description": "Read one or more text files concurrently with line numbers and range support",
+        "name": "Read",
+        "description": "Read file with format auto-detection and mode system (auto/text/media for generic; doc_text/doc_with_images/doc_images for DOC/DOCX; ppt_text/ppt_images for PPT/PPTX; pdf_text/pdf_images for PDF). Image modes return base64 image content for vision models. Supports image_dpi, image_format.",
         "inputSchema": {
           "type": "object",
           "properties": {
+            "path": {"type": "string", "description": "File path (auto mode)"},
+            "mode": {"type": "string", "enum": ["auto", "text", "media", "doc_text", "doc_with_images", "doc_images", "ppt_text", "ppt_images", "pdf_text", "pdf_images"]},
             "files": {
               "type": "array",
               "items": {
@@ -530,14 +533,15 @@ Response:
                 },
                 "required": ["path"]
               }
-            }
-          },
-          "required": ["files"]
+            },
+            "image_dpi": {"type": "integer", "description": "DPI for slide/page image rendering (default: 150)"},
+            "image_format": {"type": "string", "enum": ["png", "jpg"], "description": "Image format for rendering (default: png)"}
+          }
         }
       },
       {
-        "name": "file_edit",
-        "description": "Edit one or more files concurrently using string_replace, line_replace, insert, delete, or patch mode. Can create new files.",
+        "name": "Edit",
+        "description": "Multi-mode editing: string_replace, line_replace, insert, delete, patch. Complex office modes: office_insert, office_replace, office_delete, office_insert_image, office_format, office_insert_table. PDF modes: pdf_delete_page, pdf_insert_image, pdf_insert_text, pdf_replace_text. Supports .doc/.docx/.ppt/.pptx/.xls/.xlsx.",
         "inputSchema": {
           "type": "object",
           "properties": {
@@ -547,13 +551,21 @@ Response:
                 "type": "object",
                 "properties": {
                   "path": {"type": "string"},
-                  "mode": {"type": "string"},
+                  "mode": {"type": "string", "enum": ["string_replace", "line_replace", "insert", "delete", "patch", "office_insert", "office_replace", "office_delete", "office_insert_image", "office_format", "office_insert_table", "pdf_delete_page", "pdf_insert_image", "pdf_insert_text", "pdf_replace_text"]},
                   "old_string": {"type": "string"},
                   "new_string": {"type": "string"},
                   "occurrence": {"type": "integer"},
                   "start_line": {"type": "integer"},
                   "end_line": {"type": "integer"},
-                  "patch": {"type": "string"}
+                  "patch": {"type": "string"},
+                  "markdown": {"type": "string"},
+                  "find_text": {"type": "string"},
+                  "location": {"type": "string"},
+                  "element_type": {"type": "string"},
+                  "format_type": {"type": "string"},
+                  "image_path": {"type": "string"},
+                  "slide_index": {"type": "integer"},
+                  "page_index": {"type": "integer"}
                 },
                 "required": ["path"]
               }
@@ -563,44 +575,25 @@ Response:
         }
       },
       {
-        "name": "json_query",
-        "description": "Query a JSON file using JSON Pointer syntax",
-        "inputSchema": {
-          "type": "object",
-          "properties": {
-            "path": {"type": "string"},
-            "query": {"type": "string"}
-          },
-          "required": ["path", "query"]
-        }
-      },
-      {
-        "name": "file_stat",
-        "description": "Get metadata for one or more files or directories concurrently",
+        "name": "FileStat",
+        "description": "Get metadata for one or more files or directories, or check path existence (mode: metadata/exist)",
         "inputSchema": {
           "type": "object",
           "properties": {
             "paths": {
               "type": "array",
               "items": {"type": "string"}
+            },
+            "mode": {
+              "type": "string",
+              "enum": ["metadata", "exist"]
             }
           },
           "required": ["paths"]
         }
       },
       {
-        "name": "path_exists",
-        "description": "Check if a path exists and get its type",
-        "inputSchema": {
-          "type": "object",
-          "properties": {
-            "path": {"type": "string"}
-          },
-          "required": ["path"]
-        }
-      },
-      {
-        "name": "git_ops",
+        "name": "Git",
         "description": "Run git commands in a repository",
         "inputSchema": {
           "type": "object",
@@ -613,19 +606,8 @@ Response:
         }
       },
       {
-        "name": "env_get",
-        "description": "Get the value of an environment variable",
-        "inputSchema": {
-          "type": "object",
-          "properties": {
-            "name": {"type": "string"}
-          },
-          "required": ["name"]
-        }
-      },
-      {
-        "name": "execute_python",
-        "description": "Execute Python code for calculations, data processing, and logic evaluation. Set __result for return value. All Python standard library modules are available. Filesystem access is toggleable via WebUI.",
+      "name": "ExecutePython",
+      "description": "Execute Python code for calculations, data processing, and logic evaluation. Set __result for return value. All Python standard library modules are available. Filesystem access is toggleable via WebUI.",
         "inputSchema": {
           "type": "object",
           "properties": {
@@ -649,7 +631,7 @@ Request:
   "id": 3,
   "method": "tools/call",
   "params": {
-    "name": "file_read",
+    "name": "Read",
     "arguments": {
       "files": [
         {"path": "/path/to/file.txt", "start_line": 0, "end_line": 100}
@@ -674,29 +656,6 @@ Success Response (text tool):
   }
 }
 ```
-
-**image_read Response (full mode):**
-```json
-{
-  "jsonrpc": "2.0",
-  "id": 3,
-  "result": {
-    "content": [
-      {
-        "type": "image",
-        "data": "iVBORw0KGgoAAAANSUhEUgAA...",
-        "mimeType": "image/png"
-      },
-      {
-        "type": "text",
-        "text": "Image: screenshot.png, Dimensions: 1920x1080, Size: 1.2 MB, Type: image/png"
-      }
-    ]
-  }
-}
-```
-
-The first content item is an MCP-standard `ImageContent` with raw base64 data (no JSON wrapper), enabling vision-model clients to route the image through their encoder. The second item is human-readable metadata text.
 
 Error Response:
 ```json
@@ -748,7 +707,7 @@ Error Response:
 ### Enable a Tool
 
 ```bash
-curl -X POST http://127.0.0.1:2233/api/tool/execute_command/enable \
+curl -X POST http://127.0.0.1:2233/api/tool/Bash/enable \
   -H "Content-Type: application/json" \
   -d '{"enabled": true}'
 ```
@@ -756,7 +715,7 @@ curl -X POST http://127.0.0.1:2233/api/tool/execute_command/enable \
 ### Get Tool Statistics
 
 ```bash
-curl http://127.0.0.1:2233/api/tool/file_read/stats
+curl http://127.0.0.1:2233/api/tool/Read/stats
 ```
 
 ### Call MCP Tool via HTTP
@@ -769,9 +728,9 @@ curl -X POST http://127.0.0.1:3344 \
     "id": 1,
     "method": "tools/call",
     "params": {
-      "name": "calculator",
+      "name": "ExecutePython",
       "arguments": {
-        "expression": "2 + 2"
+        "code": "import math\nprint(math.pi * 2)"
       }
     }
   }'

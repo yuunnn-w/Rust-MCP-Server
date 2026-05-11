@@ -6,14 +6,14 @@ use std::path::PathBuf;
 #[command(
     name = "rust-mcp-server",
     author = "MCP Server Team",
-    version = "0.3.0",
+    version = "0.4.0",
     about = "A high-performance MCP server with WebUI control panel / 高性能 MCP 服务器，带 WebUI 控制面板",
     long_about = "Rust MCP Server - A high-performance Model Context Protocol server\n\
                     Rust MCP 服务器 - 高性能模型上下文协议服务器\n\n\
                     Features / 功能特性:\n\
                     - HTTP/SSE transport modes / HTTP/SSE 传输模式\n\
                     - WebUI control panel for tool management / WebUI 控制面板管理工具\n\
-                    - 25 built-in tools (file ops, calculator, HTTP, clipboard, diff, archive, notes, etc.) / 25个内置工具（文件操作、计算器、HTTP、剪贴板、差异比较、归档、笔记等）\n\
+                                         - 22 built-in tools (file ops, HTTP, clipboard, diff, archive, notes, etc.) / 22个内置工具（文件操作、HTTP、剪贴板、差异比较、归档、笔记等）\n\
                     - Tool preset profiles for quick scenario switching / 工具预设集快速切换场景\n\
                     - Real-time tool call statistics / 实时工具调用统计\n\
                     - Tool enable/disable control / 工具启用/禁用控制",
@@ -45,11 +45,11 @@ pub struct AppConfig {
     pub max_concurrency: usize,
 
     /// Disabled tools, comma-separated / 禁用的工具列表，逗号分隔
-    /// Default enabled: calculator, dir_list, file_read, file_search, image_read, file_stat, path_exists, json_query, git_ops, env_get, execute_python, diff, note_storage, clipboard
+    /// Default enabled: Glob, Read, Grep, FileStat, Git, ExecutePython, Clipboard, Diff, NoteStorage, Monitor
     #[arg(
         long,
         value_delimiter = ',',
-        default_value = "file_write,file_ops,file_edit,http_request,datetime,execute_command,process_list,base64_codec,hash_compute,system_info,archive",
+        default_value = "Write,FileOps,Edit,Bash,SystemInfo,Archive,Task",
         env = "MCP_DISABLE_TOOLS"
     )]
     #[serde(default = "default_disable_tools")]
@@ -67,7 +67,7 @@ pub struct AppConfig {
     #[arg(long, env = "MCP_DISABLE_WEBUI")]
     pub disable_webui: bool,
 
-    /// Tool preset to apply on startup (minimal/coding/document/data_analysis/system_admin/full_power/none) / 启动时应用的工具预设
+    /// Tool preset to apply on startup (minimal/coding/data_analysis/system_admin/research/full_power/none) / 启动时应用的工具预设
     #[arg(long, default_value = "minimal", env = "MCP_PRESET")]
     pub preset: String,
 
@@ -105,17 +105,13 @@ pub struct AppConfig {
 /// Default value for disable_tools
 fn default_disable_tools() -> Vec<String> {
     vec![
-        "file_write".to_string(),
-        "file_ops".to_string(),
-        "file_edit".to_string(),
-        "http_request".to_string(),
-        "datetime".to_string(),
-        "execute_command".to_string(),
-        "process_list".to_string(),
-        "base64_codec".to_string(),
-        "hash_compute".to_string(),
-        "system_info".to_string(),
-        "archive".to_string(),
+        "Write".to_string(),
+        "FileOps".to_string(),
+        "Edit".to_string(),
+        "Bash".to_string(),
+        "SystemInfo".to_string(),
+        "Archive".to_string(),
+        "Task".to_string(),
     ]
 }
 
@@ -276,8 +272,8 @@ mod tests {
             mcp_port: 8080,
             max_concurrency: 10,
             disable_tools: vec![
-                "execute_command".to_string(),
-                "process_list".to_string(),
+                "Bash".to_string(),
+                "Archive".to_string(),
             ],
             working_dir: PathBuf::from("."),
             log_level: "info".to_string(),
@@ -289,8 +285,8 @@ mod tests {
             disable_allowed_hosts: false,
         };
 
-        assert!(config.is_tool_disabled("execute_command"));
-        assert!(config.is_tool_disabled("process_list"));
-        assert!(!config.is_tool_disabled("file_read"));
+        assert!(config.is_tool_disabled("Bash"));
+        assert!(config.is_tool_disabled("Archive"));
+        assert!(!config.is_tool_disabled("Read"));
     }
 }

@@ -1,5 +1,6 @@
 use crate::mcp::presets::get_all_presets;
-use crate::mcp::state::ServerState;
+use crate::mcp::state::{ServerState, StatusUpdate};
+use crate::utils::system_metrics::SystemMetrics;
 
 use axum::{
     extract::{Path, State},
@@ -10,7 +11,6 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use std::convert::Infallible;
 use std::sync::Arc;
-use std::time::Instant;
 use tokio::sync::broadcast;
 
 /// Custom API error type with proper HTTP status codes
@@ -128,38 +128,19 @@ pub struct PresetResponse {
 
 /// Get all tools status
 pub async fn get_tools(State(state): State<Arc<ServerState>>) -> Json<ToolsResponse> {
-    let tool_statuses = state.get_all_tool_statuses();
-    let mut tools = Vec::new();
-    
-    for status in tool_statuses {
-        // Read is_calling and is_busy consistently from the same source
-        let (is_calling, is_busy) = if let Some(s) = state.tool_status.get(&status.name) {
-            let status_ref = s.value();
-            let last_end = *status_ref.last_call_end.read().await;
-            let calling = status_ref.is_calling;
-            
-            let busy = if calling {
-                true
-            } else if let Some(end_time) = last_end {
-                Instant::now().duration_since(end_time) < std::time::Duration::from_secs(5)
-            } else {
-                false
-            };
-            (calling, busy)
-        } else {
-            (status.is_calling, status.is_calling)
-        };
-        
-        tools.push(ToolStatusResponse {
-            name: status.name.clone(),
-            description: status.description.clone(),
+    let tool_statuses = state.get_all_tool_statuses().await;
+    let tools = tool_statuses
+        .into_iter()
+        .map(|status| ToolStatusResponse {
+            name: status.name,
+            description: status.description,
             enabled: status.enabled,
             call_count: status.call_count,
-            is_calling,
-            is_busy,
+            is_calling: status.is_calling,
+            is_busy: status.is_busy,
             is_dangerous: status.is_dangerous,
-        });
-    }
+        })
+        .collect();
 
     Json(ToolsResponse { tools })
 }
@@ -185,6 +166,7 @@ pub async fn get_tool_stats(
 ) -> Result<Json<ToolStatsResponse>, ApiError> {
     let status = state
         .get_tool_status(&name)
+        .await
         .ok_or_else(|| ApiError::NotFound(format!("Tool '{}' not found", name)))?;
 
     let recent_calls_15min = status.get_recent_calls_count(15).await;
@@ -196,7 +178,8 @@ pub async fn get_tool_stats(
         if durations.is_empty() {
             0.0
         } else {
-            durations.iter().sum::<u64>() as f64 / durations.len() as f64
+            let total: u64 = durations.iter().copied().fold(0u64, |acc, x| acc.saturating_add(x));
+            total as f64 / durations.len() as f64
         }
     };
     let error_rate = if status.call_count == 0 {
@@ -221,10 +204,17 @@ pub async fn enable_tool(
     State(state): State<Arc<ServerState>>,
     Path(name): Path<String>,
     Json(request): Json<EnableToolRequest>,
-) -> Result<Json<serde_json::Value>, String> {
+) -> Result<Json<serde_json::Value>, ApiError> {
     state
         .set_tool_enabled(&name, request.enabled)
-        .await?;
+        .await
+        .map_err(|e| {
+            if e.contains("not found") {
+                ApiError::NotFound(e)
+            } else {
+                ApiError::BadRequest(e)
+            }
+        })?;
 
     Ok(Json(serde_json::json!({
         "success": true,
@@ -299,6 +289,24 @@ pub async fn update_config(
     let mut restart_required = false;
     let mut max_concurrency_updated = None;
 
+    // Validate working_dir outside the lock to avoid blocking I/O while holding it
+    let validated_working_dir = if let Some(ref working_dir) = request.working_dir {
+        if !working_dir.is_empty() {
+            let path = std::path::PathBuf::from(working_dir);
+            if !path.exists() {
+                return Err(ApiError::BadRequest(format!("working_dir does not exist: {}", working_dir)));
+            }
+            if !path.is_dir() {
+                return Err(ApiError::BadRequest(format!("working_dir is not a directory: {}", working_dir)));
+            }
+            Some(path)
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
     // Acquire write lock once for all modifications
     let mut config = state.config.write().await;
 
@@ -352,12 +360,11 @@ pub async fn update_config(
         restart_required = true;
     }
 
-    if let Some(working_dir) = request.working_dir {
-        if !working_dir.is_empty() {
-            config.working_dir = std::path::PathBuf::from(&working_dir);
-            changes.push(format!("working_dir: {}", working_dir));
+    if let Some(path) = validated_working_dir {
+            let display = path.to_string_lossy().to_string();
+            changes.push(format!("working_dir: {}", display));
+            config.working_dir = path;
             restart_required = true;
-        }
     }
 
     let mut system_prompt_updated = None;
@@ -374,7 +381,6 @@ pub async fn update_config(
         state.set_system_prompt(Some(prompt));
     }
 
-    // Apply side effects outside the lock
     if let Some(max_concurrency) = max_concurrency_updated {
         state.set_max_concurrency(max_concurrency).await;
     }
@@ -442,7 +448,34 @@ pub async fn sse_handler(
         loop {
             match rx.recv().await {
                 Ok(update) => {
-                    let json = serde_json::to_string(&update).unwrap_or_default();
+                    let update = match update {
+                        StatusUpdate::ToolCallCount { tool, count, is_calling, .. } => {
+                            let is_busy = if let Some(s) = state.tool_status.get(&tool) {
+                                let last_end = *s.last_call_end.read().await;
+                                if is_calling {
+                                    true
+                                } else if let Some(end_time) = last_end {
+                                    end_time.elapsed() < std::time::Duration::from_secs(5)
+                                } else {
+                                    false
+                                }
+                            } else {
+                                false
+                            };
+                            StatusUpdate::ToolCallCount {
+                                tool,
+                                count,
+                                is_calling,
+                                is_busy,
+                            }
+                        }
+                        other => other,
+                    };
+                    let json = serde_json::to_string(&update).unwrap_or_else(|e| {
+                        tracing::error!("Failed to serialize StatusUpdate: {}", e);
+                        String::new()
+                    });
+                    if json.is_empty() { continue; }
                     yield Ok(Event::default().data(json));
                 }
                 Err(broadcast::error::RecvError::Closed) => break,
@@ -493,10 +526,11 @@ pub struct ToolDetailResponse {
 pub async fn get_tool_detail(
     State(state): State<Arc<ServerState>>,
     Path(name): Path<String>,
-) -> Result<Json<ToolDetailResponse>, String> {
+) -> Result<Json<ToolDetailResponse>, ApiError> {
     let status = state
         .get_tool_status(&name)
-        .ok_or_else(|| format!("Tool '{}' not found", name))?;
+        .await
+        .ok_or_else(|| ApiError::NotFound(format!("Tool '{}' not found", name)))?;
 
     // Generate usage information based on tool name
     let usage = generate_tool_usage(&name);
@@ -513,93 +547,91 @@ pub async fn get_tool_detail(
 /// Generate usage information for a tool
 fn generate_tool_usage(tool_name: &str) -> String {
     match tool_name {
-        "dir_list" => r#"Usage: List directory contents with filtering and brief mode (max depth 5). Returns char_count and line_count for UTF-8 text files. Not restricted to working directory.
-Parameters: path, optional max_depth (default: 2, max: 5), optional include_hidden, optional pattern (glob e.g. *.rs), optional brief (default: true), optional sort_by (name/type/size/modified), optional flatten (default: false)
-Example: {"path": "/home/user", "pattern": "*.rs", "brief": true}"#.to_string(),
-        "file_read" => r#"Usage: Read one or more text files concurrently with line numbers and range support. Not restricted to working directory.
-Parameters: files (list of file items), each with path, optional start_line (default: 0), optional end_line (default: 500), optional offset_chars, optional max_chars (default: 15000), optional line_numbers (default: true), optional highlight_line (1-based)
-Example: {"files": [{"path": "a.txt", "start_line": 0, "end_line": 100}, {"path": "b.txt", "start_line": 0, "end_line": 50}]}"#.to_string(),
-        "file_search" => r#"Usage: Search for keyword and return matching content fragments with context (max depth 5). Not restricted to working directory.
-Parameters: path, keyword, optional file_pattern (glob), optional use_regex (default: false), optional max_results (default: 20), optional context_lines (default: 3), optional brief (default: false), optional output_format (detailed/compact/location, default: detailed)
-Example: {"path": "/home/user/src", "keyword": "TODO", "context_lines": 3}"#.to_string(),
-        "file_edit" => r#"Usage: Edit one or more files concurrently using string_replace, line_replace, insert, delete, or patch mode. string_replace, line_replace, and insert can create new files if they do not exist.
+        "Glob" => r#"Usage: List directory contents with enhanced filtering (max depth 10). Supports multi-pattern glob/regex matching, exclude patterns, file type/size/time filters, sort order control, and symlink following. Returns text file char_count and line_count for UTF-8 files. Not restricted to working directory.
+Parameters: path, optional max_depth (default: 2, max: 10), optional include_hidden, optional pattern (glob e.g. *.rs), optional exclude_patterns, optional pattern_mode (glob/regex/literal), optional file_types (file/dir/symlink), optional min_size/max_size, optional sort_by (name/modified/size/file_type), optional flatten (default: false), optional follow_symlinks (default: false)
+Example: {"path": "/home/user", "pattern": "*.rs"} | {"path": "/home/user", "pattern_mode": "regex", "pattern": "test_.*\\.rs"}"#.to_string(),
+        "Read" => r#"Usage: Read a file with format auto-detection. Supports text files (line numbers/highlight/offset), PDF text extraction, DOCX/PPTX/XLSX/IPYNB parsing, and image metadata (dimensions/type/size). Use mode="text" to force text, "metadata" for image info, "pdf_text" for PDF text. Batch mode via paths parameter. Not restricted to working directory.
+Parameters: path (single file), optional paths (list for batch), optional mode (auto/text/metadata/pdf_text), optional start_line (default: 0), optional end_line (default: 500), optional offset_chars, optional max_chars (default: 15000), optional line_numbers (default: true), optional highlight_line (1-based)
+Example: {"path": "a.txt", "start_line": 0, "end_line": 100} | {"paths": ["a.txt", "b.txt"]}"#.to_string(),
+        "Grep" => r#"Usage: Search pattern in files with enhanced filtering (max depth 10). Supports regex, case-sensitive, whole-word, multiline modes. Searches office documents (DOCX/PPTX/XLSX/PDF/IPYNB) text content. File filtering via include/exclude glob patterns. Not restricted to working directory.
+Parameters: path, keyword, optional file_pattern (glob), optional include_patterns/exclude_patterns, optional use_regex (default: false), optional case_sensitive (default: true), optional whole_word, optional multiline, optional max_results (default: 20), optional context_lines (default: 3), optional brief (default: false), optional output_format (detailed/compact/location, default: detailed)
+Example: {"path": "/home/user/src", "keyword": "TODO", "use_regex": true, "context_lines": 3}"#.to_string(),
+        "Edit" => r#"Usage: Edit one or more files concurrently using string_replace, line_replace, insert, delete, or patch mode. Supports office formats (DOCX/PPTX/XLSX) via string_replace. PPTX editing may lose templates. XLSX editing may lose formulas. Can create new files with string_replace/line_replace/insert.
 Parameters: operations (list of operations), each with path, mode, and mode-specific args.
-string_replace: path, old_string, new_string, optional occurrence (1=first default, 0=all). Creates new file if not exists and new_string is provided.
-line_replace: path, start_line, end_line, new_string. Creates new file if not exists and new_string is provided.
-insert: path, start_line, new_string. Creates new file if not exists and new_string is provided.
+string_replace: path, old_string, new_string, optional occurrence (1=first default, 0=all). Creates new file if not exists.
+line_replace: path, start_line, end_line, new_string. Creates new file if not exists.
+insert: path, start_line, new_string. Creates new file if not exists.
 delete: path, start_line, end_line
 patch: path, patch (unified diff string)
 Example: {"operations": [{"path": "main.rs", "mode": "string_replace", "old_string": "fn old()", "new_string": "fn new()"}, {"path": "new.rs", "mode": "insert", "new_string": "fn main() {}"}]}"#.to_string(),
-        "file_write" => r#"Usage: Write content to one or more files concurrently.
-Parameters: files (list of file items), each with path, content, optional mode (new/append/overwrite, default: new)
-Example: {"files": [{"path": "test.txt", "content": "Hello", "mode": "new"}, {"path": "log.txt", "content": "Line", "mode": "append"}]}"#.to_string(),
-        "file_ops" => r#"Usage: Copy, move, delete, or rename one or more files concurrently.
-Parameters: operations (list of operations), each with action (copy/move/delete/rename), source, optional target, optional overwrite (default: false)
+        "Write" => r#"Usage: Write content to one or more files concurrently (create/append/overwrite). Supports creating office documents: DOCX (docx_paragraphs), XLSX (xlsx_sheets), PPTX (pptx_slides), IPYNB (ipynb_cells). Accepts a list of file items.
+Parameters: files (list of file items), each with path, content, optional mode (create/append/overwrite, default: create)
+Example: {"files": [{"path": "test.txt", "content": "Hello", "mode": "create"}, {"path": "log.txt", "content": "Line", "mode": "append"}]}"#.to_string(),
+        "FileOps" => r#"Usage: Copy, move, delete, or rename one or more files concurrently. Supports dry_run preview and conflict_resolution (skip/overwrite/rename).
+Parameters: operations (list of operations), each with action (copy/move/delete/rename), source, optional target, optional overwrite (default: false), optional dry_run, optional conflict_resolution
 Example: {"operations": [{"action": "copy", "source": "a.txt", "target": "b.txt"}, {"action": "delete", "source": "file.txt"}]}"#.to_string(),
-        "file_stat" => r#"Usage: Get metadata for one or more files or directories concurrently. Not restricted to working directory.
-Parameters: paths (list of paths)
-Returns: name, size, file_type, readable, writable, modified/created/accessed. For UTF-8 text files, also includes is_text, char_count, line_count, encoding
-Example: {"paths": ["src/main.rs", "Cargo.toml"]}"#.to_string(),
-        "path_exists" => r#"Usage: Check if a path exists and get its type. Not restricted to working directory.
-Parameters: path
-Returns: exists (bool), path_type (file/dir/symlink/none)
-Example: {"path": "src/main.rs"}"#.to_string(),
-        "json_query" => r#"Usage: Query a JSON file using JSON Pointer syntax. Not restricted to working directory.
-Parameters: path, query (JSON Pointer like /data/0/name), optional max_chars (default: 15000)
-Example: {"path": "config.json", "query": "/database/host"}"#.to_string(),
-        "git_ops" => r#"Usage: Run git commands in a repository. Not restricted to working directory.
-Parameters: action (status/diff/log/branch/show), optional repo_path (default: working_dir), optional options (array of extra args)
-Example: {"action": "status"} | {"action": "log", "options": ["--oneline", "-n", "10"]}"#.to_string(),
-        "calculator" => r#"Usage: Calculate mathematical expressions.
-Parameter: expression
-Supports: +, -, *, /, ^, sqrt, sin, cos, tan, log, ln, abs, pi, e
-Example: {"expression": "2 + 3 * 4"}"#.to_string(),
-        "http_request" => r#"Usage: Make HTTP requests with optional JSON extraction and response limiting.
+        "FileStat" => r#"Usage: Get metadata for one or more files or directories concurrently. Use mode="exist" for lightweight existence check. Returns is_text, char_count, line_count, and encoding for UTF-8 files. Not restricted to working directory.
+Parameters: paths (list of paths), optional mode (metadata/exist, default: metadata)
+Returns (metadata mode): name, size, file_type, readable, writable, modified/created/accessed, encoding info, is_text, char_count, line_count
+Returns (exist mode): path, exists (bool), file_type (file/dir/symlink/none)
+Example: {"paths": ["src/main.rs"]} | {"paths": ["config.json"], "mode": "exist"}"#.to_string(),
+        "Git" => r#"Usage: Run git commands (status, diff, log, branch, show). Supports path filtering and max_count for log. Not restricted to working directory.
+Parameters: action (status/diff/log/branch/show), optional repo_path (default: working_dir), optional options (array of extra args), optional path (for log filtering), optional max_count
+Example: {"action": "status"} | {"action": "log", "options": ["--oneline"], "max_count": 10}"#.to_string(),
+        "HttpRequest" => r#"Usage: Make HTTP requests with optional JSON extraction and response limiting.
 Parameters: url, method (GET/POST), optional headers, body, optional extract_json_path (e.g. /data/0/name), optional include_response_headers (default: false), optional max_response_chars (default: 15000)
 Example: {"url": "https://api.example.com", "method": "GET"}"#.to_string(),
-        "datetime" => r#"Usage: Get current date and time.
-No parameters required.
-Example: {}"#.to_string(),
-        "image_read" => r#"Usage: Read an image file and return base64 data or metadata only. Not restricted to working directory.
-Parameters: path, optional mode (full/metadata, default: full)
-Example: {"path": "image.png", "mode": "metadata"}"#.to_string(),
-        "execute_command" => r#"Usage: Execute a shell command (disabled by default).
-Parameters: command, optional cwd, optional timeout, optional shell (cmd/powershell/pwsh on Windows; sh/bash/zsh on Unix), optional shell_path (custom executable path, e.g., C:\Tools\pwh.exe), optional shell_arg (custom argument, e.g., -Command, /C)
-Example: {"command": "ls -la", "cwd": "/home/user"} | {"command": "Get-Date", "shell_path": "C:\\Tools\\pwh.exe"}"#.to_string(),
-        "process_list" => r#"Usage: List system processes.
-No parameters required.
-Example: {}"#.to_string(),
-        "base64_codec" => r#"Usage: Encode or decode base64 strings.
-Parameters: operation (encode/decode), input
-Example: {"operation": "encode", "input": "Hello, World!"}"#.to_string(),
-        "hash_compute" => r#"Usage: Compute hash of string or file. Not restricted to working directory.
-Parameters: input, algorithm (MD5/SHA1/SHA256)
-For files, prefix path with file:
-Example: {"input": "hello", "algorithm": "SHA256"}"#.to_string(),
-        "system_info" => r#"Usage: Get system information.
-No parameters required.
-Example: {}"#.to_string(),
-        "env_get" => r#"Usage: Get the value of an environment variable.
-Parameters: name
-Example: {"name": "PATH"}"#.to_string(),
-        "execute_python" => r#"Usage: Execute Python code with filesystem access (dangerous).
+        "Bash" => r#"Usage: Execute a shell command with optional working_dir, stdin, max_output_chars, and async_mode (disabled by default). Use Monitor tool for async commands.
+Parameters: command, optional cwd, optional timeout, optional shell (cmd/powershell/pwsh on Windows; sh/bash/zsh on Unix), optional shell_path (custom executable path), optional shell_arg (custom argument, e.g., -Command, /C), optional stdin, optional max_output_chars, optional async_mode (default: false)
+Example: {"command": "ls -la", "cwd": "/home/user"} | {"command": "npm run build", "async_mode": true}"#.to_string(),
+        "SystemInfo" => r#"Usage: Get comprehensive system information including optional process listing. Use 'sections' to select sections.
+Parameters: optional sections (list: "system", "cpu", "memory", "disks", "network", "temperature", "processes")
+Example: {} | {"sections": ["cpu", "memory", "processes"]}"#.to_string(),
+        "ExecutePython" => r#"Usage: Execute Python code for calculations, data processing, and logic evaluation. All Python standard library modules available.
 Parameters: code (Python code), optional timeout_ms (default: 5000, max: 30000)
 Set the variable __result to return a value. If not set, the last line is automatically evaluated as an expression.
-The global variable __working_dir contains the server working directory.
 Example: {"code": "import math\n__result = math.pi * 2"}"#.to_string(),
-        "clipboard" => r#"Usage: Read or write system clipboard content.
-Parameters: operation (read_text/write_text/read_image/clear), optional text (required for write_text)
+        "Clipboard" => r#"Usage: Read or write system clipboard content. Supports read_text, write_text, read_image, and clear operations. Optional format (text/html/rtf). Cross-platform.
+Parameters: operation (read_text/write_text/read_image/clear), optional text (required for write_text), optional format
 Example: {"operation": "read_text"} | {"operation": "write_text", "text": "Hello"} | {"operation": "clear"}"#.to_string(),
-        "archive" => r#"Usage: Create, extract, list, or append ZIP archives.
+        "Archive" => r#"Usage: Create, extract, list, or append ZIP archives. Supports deflate and zstd compression. Restricted to working directory.
 Parameters: operation (create/extract/list/append), archive_path, optional source_paths (for create/append), optional destination (for extract), optional compression_level 1-9 (default: 6)
 Example: {"operation": "create", "archive_path": "backup.zip", "source_paths": ["src", "Cargo.toml"]} | {"operation": "extract", "archive_path": "backup.zip", "destination": "./extracted"}"#.to_string(),
-        "diff" => r#"Usage: Compare text, files, or directories.
-Parameters: operation (compare_text/compare_files/directory_diff/git_diff_file), optional old_text/new_text (for compare_text), optional old_path/new_path (for compare_files/directory_diff), optional file_path (for git_diff_file), optional output_format (unified/side_by_side/summary/inline, default: unified), optional context_lines (default: 3), optional ignore_whitespace (default: false), optional ignore_case (default: false), optional max_output_lines (default: 500), optional word_level (default: true)
-Example: {"operation": "compare_text", "old_text": "foo\nbar", "new_text": "foo\nbaz", "output_format": "unified"} | {"operation": "git_diff_file", "file_path": "src/main.rs"}"#.to_string(),
-        "note_storage" => r#"Usage: The AI assistant's short-term memory scratchpad.
-Parameters: operation (create/list/read/update/delete/search/append), optional id (for read/update/delete/append), optional title/content/tags/category (for create/update), optional tag_filter/category (for list), optional query (for search), optional append_content (for append)
-Notes are stored only in memory and automatically erased after 30 minutes of inactivity. Max 100 notes, max 50,000 chars per note.
+        "Diff" => r#"Usage: Compare text, files, or directories. Output formats: unified, side_by_side, summary, inline. Supports ignore_blank_lines, context_lines, and git HEAD comparison.
+Parameters: operation (compare_text/compare_files/directory_diff/git_diff_file), optional old_text/new_text (for compare_text), optional old_path/new_path (for compare_files/directory_diff), optional file_path (for git_diff_file), optional output_format (unified/side_by_side/summary/inline, default: unified), optional context_lines (default: 3), optional ignore_whitespace (default: false), optional ignore_blank_lines, optional word_level (default: true), optional max_output_lines (default: 500)
+Example: {"operation": "compare_text", "old_text": "foo\nbar", "new_text": "foo\nbaz"} | {"operation": "git_diff_file", "file_path": "src/main.rs"}"#.to_string(),
+        "NoteStorage" => r#"Usage: The AI assistant's short-term memory scratchpad. Creates, lists, reads, updates, deletes, searches, and appends notes. Supports export to JSON and import from JSON. Notes auto-expire after 30 minutes of inactivity.
+Parameters: operation (create/list/read/update/delete/search/append/export/import), optional id (for read/update/delete/append), optional title/content/tags/category (for create/update), optional tag_filter/category (for list), optional query (for search), optional append_content (for append), optional notes_data (for import)
+Max 100 notes, max 50,000 chars per note.
 Example: {"operation": "create", "title": "User prefers dark mode", "content": "...", "tags": ["preference"], "category": "user_prefs"} | {"operation": "search", "query": "preference"}"#.to_string(),
+        "Task" => r#"Usage: Task management with CRUD operations. Use 'operation' parameter.
+Parameters: operation (create/list/get/update/delete), optional title (max 200 chars, required for create), optional description (max 5000 chars), optional priority (low/medium/high, default: medium), optional tags (max 5, each max 50 chars), optional id (required for get/update/delete), optional status (pending/in_progress/completed), optional status_filter/priority_filter/tag_filter (for list), optional sort_by (created/priority/status)
+create: requires title, returns task with id and status "pending"
+list: returns { tasks: [...], total_count }
+update: requires id, returns updated task
+delete: requires id, returns { deleted: true, id }
+Example: {"operation": "create", "title": "Implement login", "priority": "high", "tags": ["backend"]} | {"operation": "list", "status_filter": "pending"}"#.to_string(),
+        "WebSearch" => r#"Usage: Search the web via DuckDuckGo with optional region/language filters. Returns results with titles, URLs, and snippets.
+Parameters: query (required, max 500 chars), optional num_results (1-20, default: 10), optional region (e.g. us-en, de-de), optional language
+Output: { results: [{ title, url, snippet }], query, total_results }
+Example: {"query": "Rust programming language", "num_results": 5}"#.to_string(),
+        "AskUser" => r#"Usage: Ask the user a question with optional timeout and default_value. Supports multi-choice options via MCP elicitation.
+Parameters: question (required, max 1000 chars), optional options (list of strings, max 10), optional timeout_sec (default: 120, max: 600), optional default_value
+Output: { question, response, selected_option (if options provided) }
+Example: {"question": "Which file should I edit?", "options": ["src/main.rs", "src/lib.rs"]}"#.to_string(),
+        "WebFetch" => r#"Usage: Fetch content from a URL with extract_mode: text (strips HTML), html (raw), or markdown.
+Parameters: url (required), optional max_chars (default: 50000, max: 100000), optional extract_mode (text/html/markdown, default: text)
+Output: { url, title, text_content, content_length, encoding }
+Example: {"url": "https://example.com", "max_chars": 10000}"#.to_string(),
+        "NotebookEdit" => r#"Usage: Read, write, and edit Jupyter .ipynb notebook files. Supports add_cell, edit_cell, delete_cell operations.
+Parameters: path, operation (read/write/add_cell/edit_cell/delete_cell), optional cells (for write), optional cell_id/cell_index (for edit_cell/delete_cell), optional new_cell (for add_cell), optional content (for edit_cell), optional cell_type (code/markdown)
+Example: {"path": "notebook.ipynb", "operation": "read"} | {"path": "notebook.ipynb", "operation": "add_cell", "new_cell": {"cell_type": "code", "source": "print('hello')"}}"#.to_string(),
+        "Monitor" => r#"Usage: Monitor long-running Bash commands started with async=true. Operations: stream, wait, signal.
+Parameters: operation (stream/wait/signal), optional shell_id (required for all operations), optional signal (SIGTERM/SIGKILL/SIGINT, for signal operation)
+stream: returns real-time output chunks as they become available
+wait: blocks until command completes, returns final output and exit code
+signal: sends a signal to the running process
+Example: {"operation": "stream", "shell_id": "abc123"} | {"operation": "signal", "shell_id": "abc123", "signal": "SIGTERM"}"#.to_string(),
         _ => "No usage information available.".to_string(),
     }
 }
@@ -619,7 +651,19 @@ pub struct SystemMetricsResponse {
 
 /// Get current system metrics
 pub async fn get_system_metrics(State(state): State<Arc<ServerState>>) -> Json<SystemMetricsResponse> {
-    let metrics = state.collect_metrics();
+    let metrics = state.collect_metrics().await.unwrap_or_else(|e| {
+        tracing::error!("Failed to collect system metrics: {}", e);
+        SystemMetrics {
+            cpu_percent: 0.0,
+            memory_total: 0,
+            memory_used: 0,
+            memory_percent: 0.0,
+            cpu_cores: 0,
+            uptime_seconds: 0,
+            load_average: [0.0; 3],
+            process_count: 0,
+        }
+    });
     Json(SystemMetricsResponse {
         cpu_percent: metrics.cpu_percent,
         memory_total: metrics.memory_total,
@@ -672,8 +716,8 @@ pub async fn get_tool_presets() -> Json<Vec<PresetResponse>> {
 pub async fn apply_tool_preset(
     State(state): State<Arc<ServerState>>,
     Path(name): Path<String>,
-) -> Result<Json<serde_json::Value>, String> {
-    state.apply_preset(&name).await?;
+) -> Result<Json<serde_json::Value>, ApiError> {
+    state.apply_preset(&name).await.map_err(|e| ApiError::NotFound(e))?;
     Ok(Json(serde_json::json!({
         "success": true,
         "preset": name
@@ -693,7 +737,7 @@ pub async fn get_current_preset(State(state): State<Arc<ServerState>>) -> Json<s
 pub async fn batch_enable_tools(
     State(state): State<Arc<ServerState>>,
     Json(request): Json<BatchEnableToolsRequest>,
-) -> Result<Json<serde_json::Value>, String> {
+) -> Result<Json<serde_json::Value>, ApiError> {
     let mut changed = Vec::new();
     let mut failed = Vec::new();
     for tool_name in &request.tools {

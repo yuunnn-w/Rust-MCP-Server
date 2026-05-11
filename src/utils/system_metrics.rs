@@ -1,6 +1,6 @@
 use serde::Serialize;
 use std::sync::{Arc, Mutex};
-use sysinfo::{CpuRefreshKind, MemoryRefreshKind, RefreshKind, System};
+use sysinfo::{CpuRefreshKind, MemoryRefreshKind, ProcessRefreshKind, RefreshKind, System};
 
 /// System metrics snapshot
 #[derive(Debug, Clone, Serialize)]
@@ -33,7 +33,8 @@ impl MetricsCollector {
         let mut system = System::new_with_specifics(
             RefreshKind::nothing()
                 .with_cpu(CpuRefreshKind::everything())
-                .with_memory(MemoryRefreshKind::everything()),
+                .with_memory(MemoryRefreshKind::everything())
+                .with_processes(ProcessRefreshKind::everything()),
         );
         // Need a small delay for CPU measurement to be meaningful on first call
         std::thread::sleep(sysinfo::MINIMUM_CPU_UPDATE_INTERVAL);
@@ -45,34 +46,36 @@ impl MetricsCollector {
         }
     }
 
-    pub fn collect(&self) -> SystemMetrics {
-        let mut system = self.system.lock().unwrap();
+    pub async fn collect(&self) -> Result<SystemMetrics, String> {
+        let system_clone = self.system.clone();
+        tokio::task::spawn_blocking(move || {
+            let mut system = system_clone.lock().map_err(|e| format!("Internal error: {}", e))?;
 
-        // Refresh CPU and memory
-        system.refresh_cpu_all();
-        system.refresh_memory();
+            system.refresh_cpu_all();
+            system.refresh_memory();
 
-        let cpu_percent = system.global_cpu_usage();
-        let memory_total = system.total_memory();
-        let memory_used = system.used_memory();
-        let memory_percent = if memory_total > 0 {
-            (memory_used as f32 / memory_total as f32) * 100.0
-        } else {
-            0.0
-        };
+            let cpu_percent = system.global_cpu_usage();
+            let memory_total = system.total_memory();
+            let memory_used = system.used_memory();
+            let memory_percent = if memory_total > 0 {
+                (memory_used as f32 / memory_total as f32) * 100.0
+            } else {
+                0.0
+            };
 
-        let load_average = System::load_average();
+            let load_average = System::load_average();
 
-        SystemMetrics {
-            cpu_percent,
-            memory_total,
-            memory_used,
-            memory_percent,
-            cpu_cores: system.cpus().len(),
-            uptime_seconds: System::uptime(),
-            load_average: [load_average.one, load_average.five, load_average.fifteen],
-            process_count: system.processes().len(),
-        }
+            Ok(SystemMetrics {
+                cpu_percent,
+                memory_total,
+                memory_used,
+                memory_percent,
+                cpu_cores: system.cpus().len(),
+                uptime_seconds: System::uptime(),
+                load_average: [load_average.one, load_average.five, load_average.fifteen],
+                process_count: system.processes().len(),
+            })
+        }).await.map_err(|e| format!("spawn_blocking failed: {}", e))?
     }
 }
 
@@ -86,10 +89,10 @@ impl Default for MetricsCollector {
 mod tests {
     use super::*;
 
-    #[test]
-    fn test_metrics_collector() {
+    #[tokio::test]
+    async fn test_metrics_collector() {
         let collector = MetricsCollector::new();
-        let metrics = collector.collect();
+        let metrics = collector.collect().await.unwrap();
 
         // CPU cores should always be > 0 on any real system
         assert!(metrics.cpu_cores > 0);

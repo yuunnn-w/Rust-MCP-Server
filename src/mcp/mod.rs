@@ -93,6 +93,12 @@ pub async fn start_server(
     config: AppConfig,
 ) -> anyhow::Result<()> {
     let transport_name = config.mcp_transport.clone();
+    if transport_name != "http" && transport_name != "sse" {
+        return Err(anyhow::anyhow!(
+            "Invalid transport '{}': must be 'http' or 'sse'",
+            transport_name
+        ));
+    }
     info!(
         "Starting MCP server with {} transport on {}",
         transport_name,

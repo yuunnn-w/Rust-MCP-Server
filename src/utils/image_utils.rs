@@ -4,6 +4,12 @@ use std::path::Path;
 /// Supports PNG, JPEG, GIF, WebP.
 pub fn get_image_dimensions(path: &Path) -> Option<(u32, u32)> {
     let data = std::fs::read(path).ok()?;
+    get_image_dimensions_from_bytes(&data)
+}
+
+/// Parse image dimensions directly from already-read bytes.
+/// Supports PNG, JPEG, GIF, WebP.
+pub fn get_image_dimensions_from_bytes(data: &[u8]) -> Option<(u32, u32)> {
     if data.len() < 16 {
         return None;
     }
@@ -16,12 +22,10 @@ pub fn get_image_dimensions(path: &Path) -> Option<(u32, u32)> {
     }
 
     // GIF87a / GIF89a
-    if data.starts_with(b"GIF87a") || data.starts_with(b"GIF89a") {
-        if data.len() >= 10 {
-            let width = u16::from_le_bytes([data[6], data[7]]) as u32;
-            let height = u16::from_le_bytes([data[8], data[9]]) as u32;
-            return Some((width, height));
-        }
+    if (data.starts_with(b"GIF87a") || data.starts_with(b"GIF89a")) && data.len() >= 10 {
+        let width = u16::from_le_bytes([data[6], data[7]]) as u32;
+        let height = u16::from_le_bytes([data[8], data[9]]) as u32;
+        return Some((width, height));
     }
 
     // WebP: VP8X at offset 12, width/height at 24-30 (little endian, 24-bit)
@@ -33,10 +37,16 @@ pub fn get_image_dimensions(path: &Path) -> Option<(u32, u32)> {
                 u32::from_le_bytes([data[27], data[28], data[29], 0]) + 1;
             return Some((width, height));
         }
-        // VP8 (lossy) at offset 26
-        if &data[12..15] == b"VP8" && data.len() >= 30 {
+        // VP8 (lossy) at offset 26 — check all 4 bytes to avoid VP8L/VP8X confusion
+        if &data[12..16] == b"VP8 " && data.len() >= 30 {
             let width = u16::from_le_bytes([data[26], data[27]]) & 0x3FFF;
             let height = u16::from_le_bytes([data[28], data[29]]) & 0x3FFF;
+            return Some((width as u32, height as u32));
+        }
+        // VP8L (lossless) — offset 21
+        if &data[12..16] == b"VP8L" && data.len() >= 25 {
+            let width = u16::from_le_bytes([data[21], data[22]]) & 0x3FFF;
+            let height = u16::from_le_bytes([data[23], data[24]]) & 0x3FFF;
             return Some((width as u32, height as u32));
         }
     }
@@ -95,17 +105,6 @@ pub fn get_image_mime_type(path: &Path) -> &'static str {
     }
 }
 
-/// Check if a file is an image based on its extension
-pub fn is_image_file(path: &Path) -> bool {
-    const IMAGE_EXTENSIONS: &[&str] = &[
-        "png", "jpg", "jpeg", "gif", "bmp", "webp", "svg", "ico", "tiff", "tif", "avif",
-    ];
-
-    match path.extension().and_then(|e| e.to_str()) {
-        Some(ext) => IMAGE_EXTENSIONS.contains(&ext.to_lowercase().as_str()),
-        None => false,
-    }
-}
 
 #[cfg(test)]
 mod tests {
@@ -137,16 +136,5 @@ mod tests {
             get_image_mime_type(Path::new("test.unknown")),
             "application/octet-stream"
         );
-    }
-
-    #[test]
-    fn test_is_image_file() {
-        assert!(is_image_file(Path::new("test.png")));
-        assert!(is_image_file(Path::new("test.jpg")));
-        assert!(is_image_file(Path::new("test.JPG")));
-        assert!(is_image_file(Path::new("test.webp")));
-        assert!(!is_image_file(Path::new("test.txt")));
-        assert!(!is_image_file(Path::new("test.exe")));
-        assert!(!is_image_file(Path::new("test")));
     }
 }

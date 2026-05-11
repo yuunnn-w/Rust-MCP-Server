@@ -5,32 +5,122 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.4.0] - 2026-05-11
 
 ### Added
-- **Custom System Prompt**: New `--system-prompt` CLI flag and `MCP_SYSTEM_PROMPT` environment variable. Custom prompt is appended to MCP `initialize` instructions and can be updated via WebUI (`GET/PUT /api/config`).
-- **Custom Shell Path for `execute_command`**: New `shell_path` and `shell_arg` parameters allow specifying custom shell executables (e.g., `C:\Tools\pwh.exe` for Windows 7 + VxKex environments). Smart argument inference: filenames containing "powershell"/"pwsh"/"pwh" use `-Command`, otherwise Windows uses `/C` and Unix uses `-c`.
-- **Bilingual CLI Help**: `--help` output now displays both English and Chinese descriptions using clap's `help_template` and bilingual `help` annotations.
-- **Upgraded `sysinfo` to 0.38.4**: Upgraded from 0.33 to 0.38.4, unlocking new system information APIs.
-- **`system_info` tool overhaul**: Significantly expanded the information returned by the `system_info` tool:
-  - **Disk information**: Name, mount point, file system type (HDD/SSD), total/available capacity (GB), usage percentage, removable/read-only status
-  - **Network interfaces**: Name, MAC address, IP addresses (CIDR), MTU, total received/transmitted (MB)
-  - **Hardware temperature**: Component label, current/max/critical temperature (°C) where available
-  - **Swap memory**: Total/used/free swap (MB) and usage percentage
-  - **CPU details**: Architecture, frequency (MHz), physical core count
-  - **System details**: Boot time (Unix timestamp), long OS version, distribution ID
-- **Removed `get_if_addrs` dependency**: Network interface IP auto-detection for `allowed_hosts` now uses `sysinfo::Networks` instead of `get_if_addrs`, reducing external dependencies.
+- **Old format office support**: Read/Edit tools now support legacy .doc, .ppt, and .xls formats via LibreOffice auto-conversion (with native calamine support for .xls)
+- **DOCX reading modes**: Three modes — `doc_text` (markdown output with headings/tables/formatting), `doc_with_images` (markdown with inline embedded images), `doc_images` (extracted images only)
+- **PPTX slide-to-image mode**: `ppt_images` mode renders slides as PNG/JPG via LibreOffice, returning base64-encoded images as MCP ImageContent for vision model consumption
+- **PPTX native image extraction (v0.4.0 update)**: `ppt_images` mode now falls back to pure Rust native extraction when LibreOffice is unavailable. Extracts embedded images from each PPTX slide via ZIP parsing and presents them alongside slide text — each slide first shows all extracted images, followed by text content. Requires no external dependencies.
+- **FileStat office document stats**: `FileStat` full mode now returns `document_stats` for office files (DOCX/PPTX/PDF/XLSX) including `document_type`, `page_count`/`slide_count`/`sheet_count`, embedded `image_count`, and `text_char_count`. Enables LLMs to intelligently choose between text and image reading modes.
+- **PDF page-to-image mode**: `pdf_images` mode renders each PDF page to PNG/JPG via **pdfium-render v0.9.1** (Chromium's PDF engine). The PDFium DLL/SO is embedded directly into the executable via `include_bytes!` with zstd compression, extracted to a temp directory on first use at runtime. `build.rs` auto-downloads PDFium binaries to `assets/pdfium/` if not present. Zero runtime external dependencies
+- **Complex DOCX editing**: New `office_insert`, `office_replace`, `office_delete`, `office_insert_image`, `office_format`, `office_insert_table` modes for structured document manipulation via markdown
+- **PDF editing via lopdf**: New `pdf_delete_page`, `pdf_insert_image`, `pdf_insert_text`, `pdf_replace_text` modes using pure Rust lopdf library
+- **Markdown-based DOCX/PDF creation**: Write tool supports `office_markdown` parameter to create DOCX with headings/tables/formatting; PDF creation via LibreOffice
+- **CSV-based XLSX creation**: Write tool supports `office_csv` parameter for multi-sheet spreadsheet creation
+- **New dependencies**: `docx-rs` v0.4, `lopdf` v0.39, `pdfium-render` v0.9.1, `zstd` v0.13, `flate2` v1.0
+- **LibreOffice availability detection**: Server detects LibreOffice at startup and reports availability
+- **Archive tool AES-256 password encryption**: Added `password` parameter for creating and extracting password-protected ZIP archives
+- **Grep tool brief output mode**: New `output_format: "brief"` returns file paths and line numbers only
+- **Windows 7 native compatibility (self-contained)**: Removed `oldwin` crate. Replaced with direct integration of **VC-LTL5 v5.3.1** (`assets/vc-ltl/`, CRT replacement) and **YY-Thunks v1.2.1** (`assets/yy-thunks/`, Win8+ API stubs) via `build.rs`. Both are embedded in the repository. Verified by `YY.Depends.Analyzer.exe` targeting `6.1.7600` — zero missing API entries.
+- **Windows version-aware `system_info`**: Detects Windows version at runtime using `RtlGetVersion`. On pre-Win10 systems, skips disk/network/temperature collection to avoid compatibility issues.
+- **Windows Executable Icon**: Added application icon with rounded-corner transparency.
+- **Custom System Prompt**: New `--system-prompt` CLI flag and `MCP_SYSTEM_PROMPT` env var. Configurable via WebUI.
+- **Custom Shell Path**: New `shell_path` and `shell_arg` parameters for `Bash` tool.
+- **Bilingual CLI Help**: `--help` shows both English and Chinese descriptions.
+- **Static resource caching**: Cache headers and ETag support for static assets.
+- **Frontend UX**: Filter controls, modal ESC close, and loading states.
+- **PDFium asset restructuring**: Moved to `assets/pdfium/` directory. Auto-download supports direct library placement (`.dll`/`.so`/`.dylib`), `.tgz` archive extraction, and automatic download from pdfium-binaries with curl→PowerShell→wget fallback chain. Added **macOS** `libpdfium.dylib` support.
 
 ### Changed
-- **Tool Presets overhaul**: Redesigned the 6 existing presets (`minimal`, `coding`, `document`, `data_analysis`, `system_admin`, `full_power`) so each preset now also controls `execute_python` filesystem access state. `minimal` keeps `execute_python` sandboxed (fs=false); `coding`/`data_analysis`/`system_admin`/`full_power` enable fs access. Server auto-applies the `minimal` preset on startup by default. Use `--preset none` to skip.
-- **Documentation overhaul**: All 10 markdown files (README, architecture, user-guide, security, API, and Chinese versions) updated to reflect preset-based tool management, new `system_prompt` feature, and corrected tool counts.
-- **Changelog year correction**: All release dates corrected from 2024/2025 to 2026.
-- **`system_info` memory units corrected**: Memory fields (`memory_total_mb`, `memory_used_mb`, `memory_free_mb`, `swap_total_mb`, etc.) now correctly convert from bytes to MB by dividing by `1024 * 1024` (previously only divided by 1024, resulting in KB values labeled as MB).
-- **`system_info` numeric precision**: All floating-point values (CPU usage, memory usage, swap usage, disk usage, temperature, etc.) now rounded to 2 decimal places for consistent output.
+- **DOCX library migration**: Replaced `docx-rust` with `docx-rs` for superior image extraction, style parsing, and formatting support
+- **Read tool redesigned**: Mode system reorganized — `auto`/`text`/`media` for generic files, `doc_text`/`doc_with_images`/`doc_images` for DOC/DOCX, `ppt_text`/`ppt_images` for PPT/PPTX, `pdf_text`/`pdf_images` for PDF
+- **Read tool expanded**: New parameters `image_dpi` and `image_format` for slide/page rendering control
+- **Edit tool expanded**: Office format detection now includes .doc/.ppt/.xls; new complex editing parameters (`markdown`, `find_text`, `location`, `element_type`, `format_type`, `image_path`, `slide_index`, `page_index`)
+- **Write tool expanded**: New `office_markdown` and `office_csv` parameters; PDF file_type support
+- **Tool descriptions updated**: Read/Edit/Write descriptions in mod.rs, handler.rs, and WebUI reflect all new capabilities
+- **Read tool image modes**: `media`, `pdf_images`, `ppt_images`, and `doc_images` now return base64-encoded image content via MCP `ImageContent` for direct vision model consumption (e.g., llama.cpp) instead of file path metadata
+- **Read tool doc_with_images mode**: Images are now embedded inline at their document positions (marked with `{{IMAGE:N}}` markers in text) rather than appended at the end
+- **Read tool line_numbers parameter**: Default changed from `true` to `false`
+- **All tools parameter descriptions**: Now use `#[schemars(description)]` for complete JSON Schema coverage across all parameter fields
+- **Read tool ppt_images mode**: No longer requires LibreOffice. When LibreOffice is unavailable, falls back to pure Rust native extraction (embedded images from PPTX ZIP + slide text via `ppt-rs`). Slides present images first, then text.
+- **Read and FileStat tool descriptions**: Updated with detailed mode selection guidance, usage strategies, and office document metadata documentation.
+- **FileStat office document support**: Now extracts and returns `document_stats` (document_type, page/slide/sheet count, image count, text character count) for DOCX/PPTX/PDF/XLSX files.
+- **Tool Presets overhaul**: Redesigned the 6 presets so each preset now also controls `execute_python` filesystem access state. Server auto-applies the `minimal` preset on startup by default.
+- **State optimization**: Optimized `state.rs` with atomic types to reduce lock contention.
+- **Frontend performance**: Improved search debouncing and Canvas rendering performance.
+- **Build system**: Removed `oldwin`/`oldwin-targets` dependencies. `build.rs` now directly links VC-LTL5 `.lib` files and YY-Thunks `.obj` files with explicit `/NODEFAULTLIB` link order control.
+- **Description**: Shortened package description to "Rust Model Context Protocol (MCP) Server".
 
 ### Fixed
-- **WebUI preset i18n**: Preset buttons (`data_analysis`, `system_admin`) now correctly display Chinese names. The "Current: " label now shows translated preset names instead of English.
-- **WebUI glassmorphism flickering**: Fixed backdrop-filter flickering when moving mouse over modal overlays or sidebar. Removed conflicting `transform: translateZ(0)` / `will-change` from `.modal` and `.modal-content`, replaced with `contain: layout paint`. Optimized `bindCardTilt` to use `requestAnimationFrame` for batched transform updates.
+- **PPTX text extraction failure**: Fixed bug where slide text was empty for files using non-standard placeholder types. Switched to low-level `PresentationReader` API which extracts all shape text regardless of placeholder classification
+- **Old format incompatibility**: .doc, .ppt files now readable via LibreOffice conversion; .xls files natively supported via calamine
+- **DOCX image extraction**: Images embedded in DOCX files can now be extracted to temporary files with dimension/format metadata returned
+- **PDF text extraction returns garbled characters**: Switched from `pdf` crate raw byte decoding to `lopdf::Document::extract_text()` which properly handles font encodings, ToUnicode CMaps, and CJK text
+- **lopdf benign warnings suppressed**: Set `lopdf` log filter to `error` level to suppress benign Type3 font encoding warnings that cluttered log output
+- Fixed broadcast receiver dying on lag, causing tool list change notifications to be lost
+- Fixed line ending (\r\n) corruption in edit tool's line_replace, insert, and delete modes
+- Fixed dead code in rename auto-rename conflict resolution
+- Fixed potential OOM in archive.rs `add_dir_to_zip` and read.rs `offset_chars`
+- Fixed enhanced_glob character class parsing that was incorrectly escaping `[]`
+- Fixed `process_count` always returning 0 in system_metrics
+- Fixed `data_analysis` preset missing Diff and Archive tools
+- Fixed web handlers using `String` instead of `ApiError` for error responses
+- Fixed XSS vulnerability in WebUI config rendering
+- Fixed various `unwrap()` calls that could cause panics
+- Fixed race condition in bash sync mode timeout handling
+- Fixed temp file symlink attack vector in office_utils
+- Fixed HTTP status code not being checked in web_fetch
+- Fixed regex recompilation on every call in web_fetch and web_search
+- Fixed SSE serialization failures producing silent errors
+- **WebUI preset i18n**: Preset buttons now correctly display Chinese names
+- **WebUI glassmorphism flickering**: Fixed backdrop-filter animation conflicts when moving mouse over modals
+- **Note storage search**: Fixed note search not including tags and category
+- **ZIP path traversal**: Fixed path traversal security vulnerability in archive extraction
+- **Note content UTF-8 truncation**: Fixed panic when truncating note content at non-UTF-8 boundaries
+- **Git diff paths**: Fixed incorrect file paths for git diff in subdirectories
+- **Python thread leaks**: Fixed thread leaks during Python code execution
+- **Async runtime blocking**: Fixed sync I/O blocking the async runtime in `image_read`, `file_search`, and `diff`
+- **Handler task leaks**: Fixed task leaks in MCP handler on client reconnection
+- **`set_level` implementation**: Fixed previously empty `set_level` implementation; now properly reloads the log filter
+- **Documentation consistency audit**: Fixed multiple inconsistencies between documentation and code across all md files
+- **PPTX relationship XML parsing**: Fixed regex requiring attribute order (Target before Type), causing "PPTX contains no slides" error on some files
+- **`parse_relationship_targets`**: Rewrote to parse attributes independently regardless of XML attribute order
+- **v0.4.0 audit fixes**:
+  - Fixed missing `#[cfg(not(windows))]` stub in `windows_version.rs` causing compilation failure on Linux/macOS
+  - Fixed WebP VP8L image dimension detection using wrong byte offsets
+  - Fixed blocking `std::fs::read_dir` calls in handler.rs async context
+  - Fixed hardcoded WebUI URL in MCP initialize instructions
+  - Fixed TOCTOU race between tool enable check and concurrency permit acquisition
+  - Unified tool descriptions between handler.rs and tools/mod.rs (11 inconsistencies)
+  - Fixed `system_admin` preset being identical to `coding` preset
+  - Removed dead `HttpRequest` reference from default_disable_tools
+  - Fixed semaphore reduction silently failing under high load
+  - Fixed `pdf_replace_text` ignoring `page_index` parameter
+  - Fixed `edit_docx_insert` ignoring `find_text` and `location` parameters
+  - Removed duplicate `read_docx` call in `edit_docx_insert`
+  - Fixed N× temp file writes in PPTX text extraction
+  - Added response size limit to `WebFetch` (50MB)
+  - Wrapped blocking sysinfo calls in `spawn_blocking`
+  - Fixed blocking I/O while holding config write lock in update_config
+  - Added old format guard in `extract_text_from_bytes`
+  - Fixed WebUI concurrency HUD always resetting to 0
+  - Fixed WebUI terminal DOM memory leak
+  - Fixed heading format occurrence tracking in `apply_format_to_docx`
+  - Fixed PPTX shape double-replacement in `edit_pptx_string`
+  - Fixed `shell_arg` validation in `resolve_shell`
+  - Fixed `std::sync::Mutex` blocking in async context
+  - Switched WebUI data loading from `Promise.all` to `Promise.allSettled`
+  - Removed unused `chart.min.js` (200KB dead code)
+
+### Removed
+- **HttpRequest tool**: Deprecated as feature-incomplete; WebFetch covers web content fetching. Removed from mod.rs, handler.rs, presets.rs, and all presets. Tool count reduced from 22 to 21.
+- **`oldwin` crate**: Replaced by direct VC-LTL5 + YY-Thunks integration in `build.rs`.
+- **`chart.min.js`**: Removed unused 200KB Chart.js library. The WebUI chart is rendered via native Canvas API.
+- **`.cargo/config.toml` `/FORCE:MULTIPLE` flag**: No longer needed after removing `oldwin`.
+
+### Security
+- NotebookEdit write operations now enforce working directory sandbox
 
 ## [0.3.0] - 2026-05-05
 

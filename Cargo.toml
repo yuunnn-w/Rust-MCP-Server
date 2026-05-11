@@ -1,15 +1,15 @@
 [package]
 name = "rust-mcp-server"
-version = "0.3.0"
+version = "0.4.0"
 edition = "2021"
 authors = ["小阳uni - yuunnn_w"]
-description = "A high-performance MCP server with WebUI control panel"
+description = "Rust Model Context Protocol (MCP) Server"
 license = "GPL-3.0"
 repository = "https://github.com/yuunnn-w/Rust-MCP-Server"
 
 [dependencies]
 # MCP SDK
-rmcp = { version = "1.5.0", features = ["server", "client", "transport-streamable-http-server", "transport-streamable-http-client", "transport-streamable-http-client-reqwest", "macros"] }
+rmcp = { version = "1.5.0", features = ["server", "client", "transport-streamable-http-server", "transport-streamable-http-client", "transport-streamable-http-client-reqwest", "macros", "elicitation", "schemars"] }
 
 # Async runtime
 tokio = { version = "1.43", features = ["full"] }
@@ -49,6 +49,10 @@ reqwest = { version = "0.13", features = ["json", "stream"] }
 # Encoding
 base64 = "0.22"
 
+# Image processing
+image = "0.25"
+flate2 = "1.1"
+
 # Cryptography
 sha1 = "0.10"
 sha2 = "0.10"
@@ -56,6 +60,7 @@ md-5 = "0.10"
 
 # System info
 sysinfo = "0.38"
+get_if_addrs = "0.5.3"
 
 # Error handling
 anyhow = "1.0"
@@ -76,22 +81,42 @@ async-stream = "0.3"
 arboard = "3.6"
 
 # ZIP archive
-zip = { version = "8.6", default-features = false, features = ["deflate", "time", "zstd"] }
+zip = { version = "8.6", default-features = false, features = ["deflate", "time", "zstd", "aes-crypto"] }
 
 # Diff algorithms
 similar = { version = "3.1", default-features = false, features = ["text", "inline"] }
+
+# Compression
+zstd = "0.13"
 
 # Python sandbox execution
 rustpython-vm = { version = "0.5.0", default-features = false, features = ["compiler", "gc", "freeze-stdlib", "host_env", "stdio"] }
 rustpython-stdlib = { version = "0.5.0", default-features = false, features = ["compiler", "host_env", "ssl-rustls"] }
 rustpython-pylib = { version = "0.5.0", default-features = false, features = ["freeze-stdlib"] }
 
+# Temp file
+tempfile = "3.27"
+
+# Office document support (v0.4.0)
+docx-rs = "0.4"
+ppt-rs = "0.2.12"
+calamine = "0.34.0"
+rust_xlsxwriter = "0.94.1"
+pdf = "0.10.0"
+pdf2image = "0.1.3"
+ipynb = "0.0.1"
+lopdf = { version = "0.39", features = ["embed_image"] }
+pdfium-render = { version = "0.9.1", default-features = false, features = ["image_025", "thread_safe", "pdfium_latest"] }
+
+[target.'cfg(target_family = "windows")'.dependencies]
+
 [build-dependencies]
 winresource = "0.1"
+tempfile = "3.27"
+zstd = "0.13"
 
 [dev-dependencies]
 tokio-test = "0.4"
-tempfile = "3.16"
 base64 = "0.22"
 
 [profile.release]

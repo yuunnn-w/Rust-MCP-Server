@@ -7,16 +7,18 @@ use std::path::Path;
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct ArchiveParams {
-    /// Operation: create, extract, list, or append
+    #[schemars(description = "Operation: create, extract, list, or append")]
     pub operation: String,
-    /// Path to the ZIP archive
+    #[schemars(description = "Path to the ZIP archive file")]
     pub archive_path: String,
-    /// For create/append: list of file or directory paths to include
+    #[schemars(description = "For create/append: list of file or directory paths to include")]
     pub source_paths: Option<Vec<String>>,
-    /// For extract: destination directory (default: working_dir)
+    #[schemars(description = "For extract: destination directory (default: working_dir)")]
     pub destination: Option<String>,
-    /// Compression level 1-9 (default: 6), only for create
+    #[schemars(description = "Compression level 1-9 (default: 6), only for create")]
     pub compression_level: Option<u32>,
+    #[schemars(description = "Password for AES-256 encryption (optional, only for create/append)")]
+    pub password: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -39,12 +41,16 @@ pub async fn archive(params: Parameters<ArchiveParams>, working_dir: &Path) -> R
         "create" => {
             let sources = p.source_paths.ok_or("Missing 'source_paths' for create operation")?;
             let level = p.compression_level.unwrap_or(6).clamp(1, 9);
+            let password = p.password.clone();
             let file = File::create(&archive_path)
                 .map_err(|e| format!("Failed to create archive file: {}", e))?;
             let mut writer = zip::ZipWriter::new(file);
-            let options = zip::write::SimpleFileOptions::default()
+            let mut options = zip::write::SimpleFileOptions::default()
                 .compression_method(zip::CompressionMethod::Deflated)
-                .compression_level(Some(level.try_into().unwrap_or(6)));
+                .compression_level(Some(i64::from(level)));
+            if let Some(ref password) = password {
+                options = options.with_aes_encryption(zip::AesMode::Aes256, password);
+            }
 
             for src in sources {
                 let src_path = crate::utils::file_utils::ensure_path_within_working_dir(
@@ -73,8 +79,13 @@ pub async fn archive(params: Parameters<ArchiveParams>, working_dir: &Path) -> R
             }
             writer.finish()
                 .map_err(|e| format!("Failed to finalize archive: {}", e))?;
+            let msg = if p.password.is_some() {
+                format!("Encrypted archive created successfully: {}", archive_path.display())
+            } else {
+                format!("Archive created successfully: {}", archive_path.display())
+            };
             Ok(CallToolResult::success(vec![
-                rmcp::model::Content::text(format!("Archive created successfully: {}", archive_path.display())),
+                rmcp::model::Content::text(msg),
             ]))
         }
         "extract" => {
@@ -94,7 +105,22 @@ pub async fn archive(params: Parameters<ArchiveParams>, working_dir: &Path) -> R
             for i in 0..archive.len() {
                 let mut entry = archive.by_index(i)
                     .map_err(|e| format!("Failed to read archive entry {}: {}", i, e))?;
-                let out_path = dest.join(entry.name());
+                let name = entry.name().replace('\\', "/");
+                let name = name.strip_prefix('/').unwrap_or(&name);
+                if name.starts_with('\\') || name.contains(':') {
+                    return Err("Invalid path in archive: contains absolute Windows path or drive letter".to_string());
+                }
+                if name.split('/').any(|part| part == "..") {
+                    return Err("Invalid path in archive: contains parent directory references".to_string());
+                }
+                let out_path = dest.join(name);
+                let dest_abs = std::path::absolute(&dest)
+                    .map_err(|e| format!("Failed to resolve destination path: {}", e))?;
+                let out_abs = std::path::absolute(&out_path)
+                    .map_err(|e| format!("Failed to resolve output path: {}", e))?;
+                if !out_abs.starts_with(&dest_abs) {
+                    return Err("Invalid path in archive: escapes destination directory".to_string());
+                }
                 if entry.is_dir() {
                     std::fs::create_dir_all(&out_path)
                         .map_err(|e| format!("Failed to create directory '{}': {}", out_path.display(), e))?;
@@ -145,71 +171,98 @@ pub async fn archive(params: Parameters<ArchiveParams>, working_dir: &Path) -> R
         "append" => {
             let sources = p.source_paths.ok_or("Missing 'source_paths' for append operation")?;
             let level = p.compression_level.unwrap_or(6).clamp(1, 9);
-            // Read existing archive into memory
-            let mut existing_data = Vec::new();
-            if archive_path.exists() {
-                let mut f = File::open(&archive_path)
-                    .map_err(|e| format!("Failed to open existing archive: {}", e))?;
-                f.read_to_end(&mut existing_data)
-                    .map_err(|e| format!("Failed to read existing archive: {}", e))?;
+            let password = p.password.clone();
+            let temp_path = archive_path.with_extension("zip.tmp");
+            if temp_path.exists() {
+                std::fs::remove_file(&temp_path)
+                    .map_err(|e| format!("Failed to remove existing temp file: {}", e))?;
             }
-            let mut new_data = Vec::new();
-            {
-                let mut writer = if existing_data.is_empty() {
-                    zip::ZipWriter::new(std::io::Cursor::new(&mut new_data))
-                } else {
-                    zip::ZipWriter::new_append(std::io::Cursor::new(&mut new_data))
-                        .map_err(|e| format!("Failed to open archive for append: {}", e))?
-                };
-                let options = zip::write::SimpleFileOptions::default()
-                    .compression_method(zip::CompressionMethod::Deflated)
-                    .compression_level(Some(level.try_into().unwrap_or(6)));
 
-                for src in sources {
-                    let src_path = crate::utils::file_utils::ensure_path_within_working_dir(
-                        Path::new(&src),
-                        working_dir,
-                    ).map_err(|e| e.to_string())?;
-                    if src_path.is_file() {
-                        let name_in_zip = src_path.file_name()
-                            .and_then(|n| n.to_str())
-                            .unwrap_or("file")
-                            .to_string();
-                        writer.start_file(name_in_zip, options)
-                            .map_err(|e| format!("Failed to start file '{}': {}", src, e))?;
-                        let mut f = File::open(&src_path)
-                            .map_err(|e| format!("Failed to open '{}': {}", src, e))?;
-                        let mut buf = Vec::new();
-                        f.read_to_end(&mut buf)
-                            .map_err(|e| format!("Failed to read '{}': {}", src, e))?;
-                        writer.write_all(&buf)
-                            .map_err(|e| format!("Failed to write '{}': {}", src, e))?;
-                    } else if src_path.is_dir() {
-                        add_dir_to_zip(&mut writer, &src_path, &src_path, options)
-                            .map_err(|e| format!("Failed to add directory '{}': {}", src, e))?;
-                    }
-                }
-                writer.finish()
-                    .map_err(|e| format!("Failed to finalize archive: {}", e))?;
+            let result = append_to_archive(&sources, &archive_path, &temp_path, level, working_dir, password.as_deref());
+            if let Err(e) = result {
+                let _ = std::fs::remove_file(&temp_path);
+                return Err(e);
             }
-            // Write back
-            let mut f = File::create(&archive_path)
-                .map_err(|e| format!("Failed to write archive: {}", e))?;
-            f.write_all(&new_data)
-                .map_err(|e| format!("Failed to write archive data: {}", e))?;
-            Ok(CallToolResult::success(vec![
-                rmcp::model::Content::text(format!("Archive appended successfully: {}", archive_path.display())),
-            ]))
+            result
         }
         _ => Err(format!("Unknown archive operation: '{}'. Supported: create, extract, list, append", p.operation)),
     }
+}
+
+fn append_to_archive(
+    sources: &[String],
+    archive_path: &Path,
+    temp_path: &Path,
+    level: u32,
+    working_dir: &Path,
+    password: Option<&str>,
+) -> Result<CallToolResult, String> {
+    let owned_password = password.map(|s| s.to_owned());
+    let mut writer = if archive_path.exists() {
+        std::fs::copy(archive_path, temp_path)
+            .map_err(|e| format!("Failed to copy existing archive to temp file: {}", e))?;
+        let temp_file = std::fs::OpenOptions::new().read(true).write(true).open(temp_path)
+            .map_err(|e| format!("Failed to open temp file: {}", e))?;
+        zip::ZipWriter::new_append(temp_file)
+            .map_err(|e| format!("Failed to open archive for append: {}", e))?
+    } else {
+        let temp_file = File::create(temp_path)
+            .map_err(|e| format!("Failed to create temp file: {}", e))?;
+        zip::ZipWriter::new(temp_file)
+    };
+    let mut options = zip::write::SimpleFileOptions::default()
+        .compression_method(zip::CompressionMethod::Deflated)
+        .compression_level(Some(i64::from(level)));
+    if let Some(ref pwd) = owned_password {
+        options = options.with_aes_encryption(zip::AesMode::Aes256, pwd);
+    }
+
+    for src in sources {
+        let src_path = crate::utils::file_utils::ensure_path_within_working_dir(
+            Path::new(&src),
+            working_dir,
+        ).map_err(|e| e.to_string())?;
+        if src_path.is_file() {
+            let name_in_zip = src_path.file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("file")
+                .to_string();
+            writer.start_file(name_in_zip, options)
+                .map_err(|e| format!("Failed to start file '{}': {}", src, e))?;
+            let mut f = File::open(&src_path)
+                .map_err(|e| format!("Failed to open '{}': {}", src, e))?;
+            let mut buf = [0u8; 8192];
+            loop {
+                let n = f.read(&mut buf)
+                    .map_err(|e| format!("Failed to read '{}': {}", src, e))?;
+                if n == 0 { break; }
+                writer.write_all(&buf[..n])
+                    .map_err(|e| format!("Failed to write '{}': {}", src, e))?;
+            }
+        } else if src_path.is_dir() {
+            add_dir_to_zip(&mut writer, &src_path, &src_path, options)
+                .map_err(|e| format!("Failed to add directory '{}': {}", src, e))?;
+        }
+    }
+    writer.finish()
+        .map_err(|e| format!("Failed to finalize archive: {}", e))?;
+    std::fs::rename(temp_path, archive_path)
+        .map_err(|e| format!("Failed to replace archive with temp file: {}", e))?;
+    let msg = if owned_password.is_some() {
+        format!("Encrypted archive appended successfully: {}", archive_path.display())
+    } else {
+        format!("Archive appended successfully: {}", archive_path.display())
+    };
+    Ok(CallToolResult::success(vec![
+        rmcp::model::Content::text(msg),
+    ]))
 }
 
 fn add_dir_to_zip<W: Write + std::io::Seek>(
     writer: &mut zip::ZipWriter<W>,
     base_dir: &Path,
     current_dir: &Path,
-    options: zip::write::SimpleFileOptions,
+    options: zip::write::FileOptions<'_, ()>,
 ) -> Result<(), String> {
     for entry in std::fs::read_dir(current_dir).map_err(|e| e.to_string())? {
         let entry = entry.map_err(|e| e.to_string())?;
@@ -226,9 +279,12 @@ fn add_dir_to_zip<W: Write + std::io::Seek>(
             writer.start_file(name_in_zip, options)
                 .map_err(|e| e.to_string())?;
             let mut f = File::open(&path).map_err(|e| e.to_string())?;
-            let mut buf = Vec::new();
-            f.read_to_end(&mut buf).map_err(|e| e.to_string())?;
-            writer.write_all(&buf).map_err(|e| e.to_string())?;
+            let mut buf = [0u8; 8192];
+            loop {
+                let n = f.read(&mut buf).map_err(|e| e.to_string())?;
+                if n == 0 { break; }
+                writer.write_all(&buf[..n]).map_err(|e| e.to_string())?;
+            }
         }
     }
     Ok(())
@@ -255,6 +311,7 @@ mod tests {
             source_paths: Some(vec![test_file.to_string_lossy().to_string()]),
             destination: None,
             compression_level: None,
+            password: None,
         });
         let result = archive(create_params, working_dir).await;
         assert!(result.is_ok(), "Create failed: {:?}", result);
@@ -266,6 +323,7 @@ mod tests {
             source_paths: None,
             destination: None,
             compression_level: None,
+            password: None,
         });
         let result = archive(list_params, working_dir).await;
         assert!(result.is_ok());

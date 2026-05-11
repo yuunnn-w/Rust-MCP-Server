@@ -29,7 +29,7 @@ pub fn glob_match(pattern: &str, name: &str) -> bool {
             }
             regex_str.push('$');
             regex::Regex::new(&regex_str)
-                .unwrap_or_else(|_| regex::Regex::new("(?!)").unwrap())
+                .unwrap_or_else(|_| regex::Regex::new("a^").expect("failed to build fallback regex"))
         });
         regex.is_match(name)
     })
@@ -38,8 +38,8 @@ pub fn glob_match(pattern: &str, name: &str) -> bool {
 /// Strip Windows UNC prefix (`\\?\`) from path strings.
 /// On non-Windows platforms this is a no-op.
 pub fn strip_unc_prefix(path_str: &str) -> String {
-    if path_str.starts_with("\\\\?\\") {
-        path_str[4..].to_string()
+    if let Some(stripped) = path_str.strip_prefix("\\\\?\\") {
+        stripped.to_string()
     } else {
         path_str.to_string()
     }
@@ -141,6 +141,8 @@ pub fn ensure_path_within_working_dir(
                 // If parent doesn't exist either, we can't verify,
                 // but we can check if the path itself starts with working dir
                 if !parent.exists() {
+                    // New file in a new directory: string prefix check is acceptable
+                    // since canonicalization is unavailable for non-existent paths.
                     if path_to_check.starts_with(&canonical_working) {
                         return Ok(path_to_check);
                     } else {

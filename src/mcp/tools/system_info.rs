@@ -1,5 +1,8 @@
+use rmcp::handler::server::wrapper::Parameters;
 use rmcp::model::CallToolResult;
-use serde::Serialize;
+use rmcp::schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
+use std::cmp::Ordering;
 use sysinfo::{
     Components, CpuRefreshKind, DiskKind, Disks, MemoryRefreshKind, Networks, RefreshKind,
     System,
@@ -7,6 +10,16 @@ use sysinfo::{
 
 fn round_two(value: f64) -> f64 {
     (value * 100.0).round() / 100.0
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct SystemInfoParams {
+    #[schemars(description = "Sections to include: system, cpu, memory, disks, network, temperature, processes. Default: all sections enabled. On Windows 7, disk/network/temperature are skipped for compatibility.")]
+    pub sections: Option<Vec<String>>,
+    #[schemars(description = "Maximum number of processes to return (default: 50)")]
+    pub process_limit: Option<usize>,
+    #[schemars(description = "Sort processes by: cpu, memory, name (default: cpu)")]
+    pub process_sort: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -37,7 +50,10 @@ struct SystemInfo {
     load_average: Option<(f64, f64, f64)>,
     disks: Vec<DiskInfo>,
     network_interfaces: Vec<NetworkInterfaceInfo>,
+    interface_ips: Vec<InterfaceIpInfo>,
     components: Vec<ComponentInfo>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    processes: Option<Vec<ProcessInfo>>,
 }
 
 #[derive(Debug, Serialize)]
@@ -64,6 +80,13 @@ struct NetworkInterfaceInfo {
 }
 
 #[derive(Debug, Serialize)]
+struct InterfaceIpInfo {
+    interface_name: String,
+    ip: String,
+    is_loopback: bool,
+}
+
+#[derive(Debug, Serialize)]
 struct ComponentInfo {
     label: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -74,7 +97,26 @@ struct ComponentInfo {
     critical_temperature: Option<f64>,
 }
 
-pub async fn system_info() -> Result<CallToolResult, String> {
+pub async fn system_info(params: Parameters<SystemInfoParams>) -> Result<CallToolResult, String> {
+    let params = params.0;
+    let sections_raw = params.sections;
+    let sections_lower: Option<Vec<String>> = sections_raw.map(|v| v.iter().map(|s| s.to_lowercase()).collect());
+    let sections_all = sections_lower.as_ref().map(|s| s.is_empty()).unwrap_or(false)
+        || sections_lower.is_none();
+    let section_enabled = |name: &str| -> bool {
+        sections_all || sections_lower.as_ref().map(|s| s.contains(&name.to_string())).unwrap_or(false)
+    };
+    let process_limit = params.process_limit.unwrap_or(50);
+    let process_sort = params.process_sort.unwrap_or_else(|| "cpu".to_string());
+
+    // Detect Windows version at runtime. On systems older than Windows 10,
+    // skip collecting disk, network, and component (temperature) data to avoid
+    // potential crashes caused by sysinfo/windows crate compatibility issues.
+    #[cfg(windows)]
+    let is_modern_windows = crate::utils::windows_version::is_windows_10_or_later();
+    #[cfg(not(windows))]
+    let is_modern_windows = true;
+
     let mut system = System::new_with_specifics(
         RefreshKind::nothing()
             .with_cpu(CpuRefreshKind::everything())
@@ -142,88 +184,120 @@ pub async fn system_info() -> Result<CallToolResult, String> {
     let load_average = None;
 
     // Disks
-    let disks = Disks::new_with_refreshed_list();
-    let disks_info: Vec<DiskInfo> = disks
-        .iter()
-        .map(|disk| {
-            let total = disk.total_space() as f64;
-            let available = disk.available_space() as f64;
-            let used = if total > available { total - available } else { 0.0 };
-            let usage_percent = if total > 0.0 {
-                round_two((used / total) * 100.0)
-            } else {
-                0.0
-            };
-            DiskInfo {
-                name: disk.name().to_string_lossy().to_string(),
-                mount_point: disk.mount_point().display().to_string(),
-                file_system: disk.file_system().to_string_lossy().to_string(),
-                kind: match disk.kind() {
-                    DiskKind::HDD => "HDD".to_string(),
-                    DiskKind::SSD => "SSD".to_string(),
-                    DiskKind::Unknown(_) => "Unknown".to_string(),
-                },
-                total_gb: round_two(total / (1024.0 * 1024.0 * 1024.0)),
-                available_gb: round_two(available / (1024.0 * 1024.0 * 1024.0)),
-                usage_percent,
-                is_removable: disk.is_removable(),
-                is_read_only: disk.is_read_only(),
-            }
+    let disks_info: Vec<DiskInfo> = if is_modern_windows && section_enabled("disks") {
+        tokio::task::spawn_blocking(move || {
+            let disks = Disks::new_with_refreshed_list();
+            disks
+                .iter()
+                .map(|disk| {
+                    let total = disk.total_space() as f64;
+                    let available = disk.available_space() as f64;
+                    let used = if total > available { total - available } else { 0.0 };
+                    let usage_percent = if total > 0.0 {
+                        round_two((used / total) * 100.0)
+                    } else {
+                        0.0
+                    };
+                    DiskInfo {
+                        name: disk.name().to_string_lossy().to_string(),
+                        mount_point: disk.mount_point().display().to_string(),
+                        file_system: disk.file_system().to_string_lossy().to_string(),
+                        kind: match disk.kind() {
+                            DiskKind::HDD => "HDD".to_string(),
+                            DiskKind::SSD => "SSD".to_string(),
+                            DiskKind::Unknown(_) => "Unknown".to_string(),
+                        },
+                        total_gb: round_two(total / (1024.0 * 1024.0 * 1024.0)),
+                        available_gb: round_two(available / (1024.0 * 1024.0 * 1024.0)),
+                        usage_percent,
+                        is_removable: disk.is_removable(),
+                        is_read_only: disk.is_read_only(),
+                    }
+                })
+                .collect::<Vec<DiskInfo>>()
+        }).await.unwrap_or_else(|e| {
+            tracing::error!("Failed to collect disk info: {}", e);
+            vec![]
         })
-        .collect();
+    } else {
+        vec![]
+    };
 
     // Network interfaces
-    let networks = Networks::new_with_refreshed_list();
-    let network_interfaces: Vec<NetworkInterfaceInfo> = networks
-        .iter()
-        .map(|(name, data)| {
-            let total_received = data.total_received() as f64;
-            let total_transmitted = data.total_transmitted() as f64;
-            NetworkInterfaceInfo {
-                name: name.clone(),
-                mac_address: data.mac_address().to_string(),
-                ip_addresses: data.ip_networks().iter().map(|n| n.to_string()).collect(),
-                mtu: data.mtu(),
-                total_received_mb: round_two(total_received / (1024.0 * 1024.0)),
-                total_transmitted_mb: round_two(total_transmitted / (1024.0 * 1024.0)),
-            }
+    let network_interfaces: Vec<NetworkInterfaceInfo> = if is_modern_windows && section_enabled("network") {
+        tokio::task::spawn_blocking(move || {
+            let networks = Networks::new_with_refreshed_list();
+            networks
+                .iter()
+                .map(|(name, data)| {
+                    let total_received = data.total_received() as f64;
+                    let total_transmitted = data.total_transmitted() as f64;
+                    NetworkInterfaceInfo {
+                        name: name.clone(),
+                        mac_address: data.mac_address().to_string(),
+                        ip_addresses: data.ip_networks().iter().map(|n| n.to_string()).collect(),
+                        mtu: data.mtu(),
+                        total_received_mb: round_two(total_received / (1024.0 * 1024.0)),
+                        total_transmitted_mb: round_two(total_transmitted / (1024.0 * 1024.0)),
+                    }
+                })
+                .collect::<Vec<NetworkInterfaceInfo>>()
+        }).await.unwrap_or_else(|e| {
+            tracing::error!("Failed to collect network info: {}", e);
+            vec![]
         })
-        .collect();
+    } else {
+        vec![]
+    };
 
     // Hardware components (temperature)
-    let components = Components::new_with_refreshed_list();
-    let components_info: Vec<ComponentInfo> = components
-        .iter()
-        .map(|component| {
-            let temp = component.temperature();
-            let max_temp = component.max();
-            let critical_temp = component.critical();
-            ComponentInfo {
-                label: component.label().to_string(),
-                temperature: temp.and_then(|t| {
-                    if t.is_nan() {
-                        None
-                    } else {
-                        Some(round_two(t as f64))
+    let components_info: Vec<ComponentInfo> = if is_modern_windows && (section_enabled("temperature") || section_enabled("components")) {
+        tokio::task::spawn_blocking(move || {
+            let components = Components::new_with_refreshed_list();
+            components
+                .iter()
+                .map(|component| {
+                    let temp = component.temperature();
+                    let max_temp = component.max();
+                    let critical_temp = component.critical();
+                    ComponentInfo {
+                        label: component.label().to_string(),
+                        temperature: temp.and_then(|t| {
+                            if t.is_nan() { None } else { Some(round_two(t as f64)) }
+                        }),
+                        max_temperature: max_temp.and_then(|t| {
+                            if t.is_nan() { None } else { Some(round_two(t as f64)) }
+                        }),
+                        critical_temperature: critical_temp.and_then(|t| {
+                            if t.is_nan() { None } else { Some(round_two(t as f64)) }
+                        }),
                     }
-                }),
-                max_temperature: max_temp.and_then(|t| {
-                    if t.is_nan() {
-                        None
-                    } else {
-                        Some(round_two(t as f64))
-                    }
-                }),
-                critical_temperature: critical_temp.and_then(|t| {
-                    if t.is_nan() {
-                        None
-                    } else {
-                        Some(round_two(t as f64))
-                    }
-                }),
-            }
+                })
+                .collect::<Vec<ComponentInfo>>()
+        }).await.unwrap_or_else(|e| {
+            tracing::error!("Failed to collect component info: {}", e);
+            vec![]
         })
-        .collect();
+    } else {
+        vec![]
+    };
+
+    // Interface IPs from get_if_addrs
+    let interface_ips: Vec<InterfaceIpInfo> = if section_enabled("network") {
+        match tokio::task::spawn_blocking(get_if_addrs::get_if_addrs).await {
+            Ok(Ok(ifaces)) => ifaces
+                .into_iter()
+                .map(|iface| InterfaceIpInfo {
+                    interface_name: iface.name.clone(),
+                    ip: iface.ip().to_string(),
+                    is_loopback: iface.is_loopback(),
+                })
+                .collect(),
+            _ => vec![],
+        }
+    } else {
+        vec![]
+    };
 
     let info = SystemInfo {
         os_name: System::name().unwrap_or_else(|| "Unknown".to_string()),
@@ -251,12 +325,60 @@ pub async fn system_info() -> Result<CallToolResult, String> {
         load_average,
         disks: disks_info,
         network_interfaces,
+        interface_ips,
         components: components_info,
+        processes: None,
     };
+
+    // Build processes if requested
+    if section_enabled("processes") {
+        let mut info = info;
+        info.processes = Some(get_process_list(process_limit, &process_sort).await);
+        let json = serde_json::to_string_pretty(&info).map_err(|e| e.to_string())?;
+        return Ok(CallToolResult::success(vec![rmcp::model::Content::text(json)]));
+    }
 
     let json = serde_json::to_string_pretty(&info).map_err(|e| e.to_string())?;
 
     Ok(CallToolResult::success(vec![rmcp::model::Content::text(json)]))
+}
+
+async fn get_process_list(limit: usize, sort_by: &str) -> Vec<ProcessInfo> {
+    use sysinfo::{ProcessRefreshKind, ProcessesToUpdate, RefreshKind, System as Sys};
+    let mut system = Sys::new_with_specifics(
+        RefreshKind::everything().with_processes(ProcessRefreshKind::everything()),
+    );
+    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    system.refresh_processes(ProcessesToUpdate::All, true);
+
+    let mut processes: Vec<ProcessInfo> = system
+        .processes()
+        .iter()
+        .map(|(pid, process)| ProcessInfo {
+            pid: pid.as_u32(),
+            name: process.name().to_string_lossy().to_string(),
+            cpu_usage: process.cpu_usage(),
+            memory_mb: process.memory() / (1024 * 1024),
+            status: format!("{:?}", process.status()),
+        })
+        .collect();
+
+    match sort_by {
+        "memory" => processes.sort_by_key(|b| std::cmp::Reverse(b.memory_mb)),
+        "name" => processes.sort_by_key(|a| a.name.to_lowercase()),
+        _ => processes.sort_by(|a, b| b.cpu_usage.partial_cmp(&a.cpu_usage).unwrap_or(Ordering::Equal)),
+    }
+
+    processes.into_iter().take(limit).collect()
+}
+
+#[derive(Debug, Serialize)]
+struct ProcessInfo {
+    pid: u32,
+    name: String,
+    cpu_usage: f32,
+    memory_mb: u64,
+    status: String,
 }
 
 #[cfg(test)]
@@ -265,7 +387,12 @@ mod tests {
 
     #[tokio::test]
     async fn test_system_info() {
-        let result = system_info().await;
+        let params = SystemInfoParams {
+            sections: None,
+            process_limit: None,
+            process_sort: None,
+        };
+        let result = system_info(Parameters(params)).await;
         assert!(result.is_ok());
 
         if let Ok(ref call_result) = result {
@@ -274,7 +401,7 @@ mod tests {
                 assert!(text.text.contains("cpu_count"));
                 assert!(text.text.contains("disks"));
                 assert!(text.text.contains("network_interfaces"));
-                assert!(text.text.contains("components"));
+                assert!(text.text.contains("interface_ips"));
             }
         }
     }

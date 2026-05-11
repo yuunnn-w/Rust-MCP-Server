@@ -21,6 +21,12 @@ pub struct GitOpsParams {
     /// Additional options for the git command (e.g. ["--oneline", "-n", "10"])
     #[schemars(description = "Additional options for the git command")]
     pub options: Option<Vec<String>>,
+    /// Limit git operations to a specific file path
+    #[schemars(description = "Limit git operations to a specific file path")]
+    pub path: Option<String>,
+    /// Maximum number of commits for log action
+    #[schemars(description = "Maximum number of commits for log action")]
+    pub max_count: Option<usize>,
 }
 
 pub async fn git_ops(
@@ -54,6 +60,9 @@ pub async fn git_ops(
         }
         "log" => {
             cmd.arg("log");
+            if let Some(max_count) = params.max_count {
+                cmd.arg("-n").arg(max_count.to_string());
+            }
         }
         "branch" => {
             cmd.arg("branch").arg("-a");
@@ -72,16 +81,11 @@ pub async fn git_ops(
     // Add user options (with security filtering)
     if let Some(options) = params.options {
         for opt in options {
-            // Reject options that could be used for command injection or path traversal
-            if opt.contains('=') {
+            if opt.contains("../") || opt.contains("..\\")
+                || (opt.starts_with('/') && opt.len() > 1)
+                || opt.contains("://") {
                 return Err(format!(
-                    "Git option '{}' contains '=' which is not allowed for security reasons.",
-                    opt
-                ));
-            }
-            if opt.contains("../") || opt.contains("..\\") || (opt.starts_with('/') && opt.len() > 1) {
-                return Err(format!(
-                    "Git option '{}' contains path traversal which is not allowed.",
+                    "Git option '{}' contains path traversal or URL which is not allowed.",
                     opt
                 ));
             }
@@ -91,15 +95,40 @@ pub async fn git_ops(
                     opt
                 ));
             }
-            cmd.arg(opt);
+            // Allow --opt=value style (safe for read-only git commands)
+            let before_eq = opt.split('=').next().unwrap_or(&opt);
+            if before_eq.contains(';') || before_eq.contains('|') || before_eq.contains('&') {
+                return Err(format!(
+                    "Git option '{}' contains shell metacharacters which is not allowed.",
+                    opt
+                ));
+            }
+            cmd.arg(&opt);
+        }
+    }
+
+    // Append path filter for commands that support it
+    if let Some(ref path) = params.path {
+        if matches!(action.as_str(), "log" | "diff" | "show") {
+            let resolved_path = resolve_path(Path::new(path), &canonical_repo)?;
+            if !resolved_path.starts_with(&canonical_repo) {
+                return Err(format!(
+                    "Access denied: path '{}' is outside the repository '{}'",
+                    path,
+                    canonical_repo.display()
+                ));
+            }
+            let relative = resolved_path.strip_prefix(&canonical_repo)
+                .unwrap_or(Path::new(path));
+            cmd.arg("--").arg(relative);
         }
     }
 
     // Set GIT_WORK_TREE to restrict git to the repo directory
-    // Strip UNC prefix so git recognizes the path on Windows
     let repo_str = strip_unc_prefix(&canonical_repo.to_string_lossy());
     cmd.env("GIT_WORK_TREE", &repo_str);
-    cmd.env("GIT_DIR", format!(r"{}\.git", repo_str));
+    // Do not set GIT_DIR — let git auto-detect the .git directory.
+    // This preserves compatibility with git worktrees, submodules, and bare repos.
 
     let output = timeout(
         Duration::from_secs(30),
@@ -131,9 +160,13 @@ pub async fn git_ops(
     let mut response = String::new();
     if !stdout.is_empty() {
         let truncated = if stdout.len() > MAX_OUTPUT_SIZE {
+            let trunc_point = stdout.char_indices()
+                .nth(MAX_OUTPUT_SIZE)
+                .map(|(i, _)| i)
+                .unwrap_or(stdout.len());
             format!(
                 "{}\n\n[... Output truncated, total size {} bytes, limit {} bytes ...]",
-                &stdout[..MAX_OUTPUT_SIZE],
+                &stdout[..trunc_point],
                 stdout.len(),
                 MAX_OUTPUT_SIZE
             )
@@ -186,6 +219,8 @@ mod tests {
             repo_path: Some(temp_dir.path().to_string_lossy().to_string()),
             action: "status".to_string(),
             options: None,
+            path: None,
+            max_count: None,
         };
 
         let result = git_ops(Parameters(params), temp_dir.path()).await;
@@ -201,6 +236,8 @@ mod tests {
             repo_path: Some(temp_dir.path().to_string_lossy().to_string()),
             action: "branch".to_string(),
             options: None,
+            path: None,
+            max_count: None,
         };
 
         let result = git_ops(Parameters(params), temp_dir.path()).await;
@@ -215,6 +252,8 @@ mod tests {
             repo_path: Some(temp_dir.path().to_string_lossy().to_string()),
             action: "invalid".to_string(),
             options: None,
+            path: None,
+            max_count: None,
         };
 
         let result = git_ops(Parameters(params), temp_dir.path()).await;

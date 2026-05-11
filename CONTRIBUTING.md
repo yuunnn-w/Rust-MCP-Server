@@ -77,7 +77,7 @@ Types: `feat`, `fix`, `docs`, `style`, `refactor`, `test`, `chore`
 
 Example:
 ```
-feat(tools): add file_search tool
+feat(tools): add Grep tool
 
 Add a new tool to search for keywords in files and directories.
 Implements recursive search with depth limit.

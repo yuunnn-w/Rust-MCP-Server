@@ -1,4 +1,4 @@
-# API 文档
+﻿# API 文档
 
 ## REST API 端点
 
@@ -14,8 +14,8 @@
 {
   "tools": [
     {
-      "name": "file_read",
-      "description": "Read text file content with line range support. Not restricted to working directory.",
+      "name": "Read",
+      "description": "读取文件，支持模式系统：通用文件 auto/text/media，DOC/DOCX 用 doc_text/doc_with_images/doc_images，PPT/PPTX 用 ppt_text/ppt_images，PDF 用 pdf_text/pdf_images。图片模式返回 Base64 编码内容供视觉模型使用。支持 image_dpi、image_format。不受工作目录限制。",
       "enabled": true,
       "call_count": 42,
       "is_calling": false,
@@ -23,8 +23,8 @@
       "is_dangerous": false
     },
     {
-      "name": "execute_command",
-      "description": "Execute shell command in specified directory (restricted to working directory)",
+      "name": "Bash",
+      "description": "在指定工作目录中执行 Shell 命令，支持 stdin、max_output_chars 和 async_mode。使用 Monitor 工具处理异步命令。",
       "enabled": false,
       "call_count": 5,
       "is_calling": false,
@@ -32,7 +32,7 @@
       "is_dangerous": true
     },
     {
-      "name": "clipboard",
+      "name": "Clipboard",
       "description": "Read or write system clipboard content (text or image)",
       "enabled": true,
       "call_count": 0,
@@ -41,8 +41,8 @@
       "is_dangerous": false
     },
     {
-      "name": "archive",
-      "description": "Create, extract, list, or append ZIP archives",
+      "name": "Archive",
+      "description": "创建、解压、列出或追加 ZIP 归档，支持 AES-256 密码加密",
       "enabled": false,
       "call_count": 0,
       "is_calling": false,
@@ -50,7 +50,7 @@
       "is_dangerous": true
     },
     {
-      "name": "diff",
+      "name": "Diff",
       "description": "Compare text, files, or directories with multiple output formats",
       "enabled": true,
       "call_count": 0,
@@ -59,7 +59,7 @@
       "is_dangerous": false
     },
     {
-      "name": "note_storage",
+      "name": "NoteStorage",
       "description": "In-memory temporary scratchpad for AI short-term memory",
       "enabled": true,
       "call_count": 0,
@@ -71,22 +71,16 @@
 }
 ```
 
-**字段说明：**
-- `name`: 工具标识符
-- `description`: 人类可读的描述
-- `enabled`: 工具当前是否启用
-- `call_count`: 总调用次数
-- `is_calling`: 工具是否正在被调用
-- `is_busy`: 是否达到并发限制
-- `is_dangerous`: 是否为危险操作工具
-
+**字段说明�?*
+- `name`: 工具标识�?- `description`: 人类可读的描�?- `enabled`: 工具当前是否启用
+- `call_count`: 总调用次�?- `is_calling`: 工具是否正在被调�?- `is_busy`: 是否达到并发限制
+- `is_dangerous`: 是否为危险操作工�?
 #### GET /api/tool/{name}/stats
-获取特定工具的详细统计信息。
-
-**响应：**
+获取特定工具的详细统计信息�?
+**响应�?*
 ```json
 {
-  "name": "file_read",
+  "name": "Read",
   "total_calls": 42,
   "recent_calls_15min": 5,
   "stats_history": [0, 1, 2, 3, 2, 1, 0, 0, 0, 0],
@@ -94,20 +88,15 @@
 }
 ```
 
-**字段说明：**
+**字段说明�?*
 - `name`: 工具名称
-- `total_calls`: 启动以来的总调用次数
-- `recent_calls_15min`: 最近15分钟的调用次数
-- `stats_history`: 每5分钟间隔的调用次数数组（最近2小时）
-- `recent_call_times`: 最近调用的时间戳
-
+- `total_calls`: 启动以来的总调用次�?- `recent_calls_15min`: 最�?5分钟的调用次�?- `stats_history`: �?分钟间隔的调用次数数组（最�?小时�?- `recent_call_times`: 最近调用的时间�?
 #### GET /api/tool/{name}/detail
-获取工具的详细信息。
-
-**响应：**
+获取工具的详细信息�?
+**响应�?*
 ```json
 {
-  "name": "file_read",
+  "name": "Read",
   "description": "Read text file content with line range support",
   "usage": "Usage: Provide a 'path' parameter with optional 'start_line' and 'end_line'...",
   "enabled": true,
@@ -116,41 +105,39 @@
 ```
 
 #### POST /api/tool/{name}/enable
-启用或禁用工具。
-
-**请求：**
+启用或禁用工具�?
+**请求�?*
 ```json
 {
   "enabled": false
 }
 ```
 
-**响应：**
+**响应�?*
 ```json
 {
   "success": true,
-  "tool": "file_read",
+  "tool": "Read",
   "enabled": false
 }
 ```
 
 #### POST /api/tools/batch-enable
-批量启用或禁用多个工具。
-
-**请求：**
+批量启用或禁用多个工具�?
+**请求�?*
 ```json
 {
-  "tools": ["file_read", "file_write", "execute_command"],
+  "tools": ["Read", "Write", "Bash"],
   "enabled": true
 }
 ```
 
-**响应：**
+**响应�?*
 ```json
 {
   "success": true,
   "enabled": true,
-  "changed": ["file_read", "file_write", "execute_command"],
+  "changed": ["Read", "Write", "Bash"],
   "failed": []
 }
 ```
@@ -158,48 +145,46 @@
 ### 工具预设
 
 #### GET /api/tool-presets
-获取所有可用的工具预设。
-
-**响应：**
+获取所有可用的工具预设�?
+**响应�?*
 ```json
 [
   {
     "name": "minimal",
-    "description": "Minimal safe mode",
-    "tool_count": 16
+    "description": "Minimal safe mode: read-only, computation, and sandboxed Python tools only",
+    "tool_count": 9
   },
   {
     "name": "coding",
-    "description": "Coding & development",
-    "tool_count": 23
-  },
-  {
-    "name": "document",
-    "description": "Document processing",
-    "tool_count": 16
-  },
-  {
-    "name": "data_analysis",
-    "description": "Data analysis",
-    "tool_count": 18
-  },
-  {
-    "name": "system_admin",
-    "description": "System administration",
+    "description": "Coding & development: full file operations, git, commands, Python with FS access, HTTP, clipboard, archive, task management",
     "tool_count": 20
   },
   {
+    "name": "data_analysis",
+    "description": "Data analysis: Python with FS access, web tools, HTTP, file reading/writing, Diff, Archive, NotebookEdit",
+    "tool_count": 15
+  },
+  {
+    "name": "system_admin",
+    "description": "System administration: system info, processes, commands, Python with FS access, file operations, archive, Monitor",
+    "tool_count": 20
+  },
+  {
+    "name": "research",
+    "description": "Research & documentation: web search, content fetching, file reading, notes, task tracking, user elicitation, NotebookEdit",
+    "tool_count": 10
+  },
+  {
     "name": "full_power",
-    "description": "All tools enabled",
-    "tool_count": 25
+    "description": "Full power: all 21 tools enabled",
+    "tool_count": 21
   }
 ]
 ```
 
 #### GET /api/tool-presets/current
-获取当前激活的预设名称。
-
-**响应：**
+获取当前激活的预设名称�?
+**响应�?*
 ```json
 {
   "success": true,
@@ -208,9 +193,8 @@
 ```
 
 #### POST /api/tool-presets/apply/{name}
-应用工具预设。此操作会原子性地根据预设配置启用/禁用工具。
-
-**响应：**
+应用工具预设。此操作会原子性地根据预设配置启用/禁用工具�?
+**响应�?*
 ```json
 {
   "success": true,
@@ -219,22 +203,19 @@
 ```
 
 **可用预设：**
-- `minimal`: 安全只读工具 + 沙箱 Python（16 个，`execute_python` 无文件系统访问）
-- `coding`: 开发相关工具，包含文件编辑和命令执行（23 个，`execute_python` 可文件系统访问）
-- `document`: 文档处理工具，包含文件写入和剪贴板（16 个，`execute_python` 无文件系统访问）
-- `data_analysis`: 数据分析工具，包含计算器、Python 和差异比较（18 个，`execute_python` 可文件系统访问）
-- `system_admin`: 系统管理工具，包含系统信息、进程列表和命令执行（20 个，`execute_python` 可文件系统访问）
-- `full_power`: 启用全部 25 个工具（`execute_python` 可文件系统访问）
+- `minimal`: 安全只读工具 + 沙箱 Python（9 个，`ExecutePython` 无文件系统访问）
+- `coding`: 开发相关工具，包含文件编辑、任务管理和命令执行（20 个，`ExecutePython` 可文件系统访问）
+- `data_analysis`: 数据分析工具，包含 Python、差异比较、归档和网络工具（15 个，`ExecutePython` 可文件系统访问）
+- `system_admin`: 系统管理工具，包含系统信息、进程、命令和文件操作（20 个，`ExecutePython` 可文件系统访问）
+- `research`: 研究与文档处理工具，包含网页搜索、网页抓取和文件读取（10 个，`ExecutePython` 无文件系统访问）
+- `full_power`: 启用全部 21 个工具（`ExecutePython` 可文件系统访问）
 
-### 服务器状态
-
+### 服务器状�?
 #### GET /api/status
-`/api/tools` 的别名。返回所有工具的状态。
-
+`/api/tools` 的别名。返回所有工具的状态�?
 #### GET /api/server-status
-获取服务器运行时状态。
-
-**响应：**
+获取服务器运行时状态�?
+**响应�?*
 ```json
 {
   "current_calls": 2,
@@ -243,7 +224,7 @@
 }
 ```
 
-**字段说明：**
+**字段说明�?*
 - `current_calls`: 当前正在执行的工具调用数
 - `max_concurrency`: 允许的最大并发调用数
 - `mcp_running`: MCP 服务是否正在运行
@@ -251,9 +232,8 @@
 ### 配置管理
 
 #### GET /api/config
-获取当前服务器配置。
-
-**响应：**
+获取当前服务器配置�?
+**响应�?*
 ```json
 {
   "webui_host": "127.0.0.1",
@@ -269,21 +249,20 @@
 ```
 
 #### PUT /api/config
-更新配置（有限选项）。
-
-**请求：**
+更新配置（有限选项）�?
+**请求�?*
 ```json
 {
   "max_concurrency": 20
 }
 ```
 
-**响应：**
+**响应�?*
 ```json
 {
   "success": true,
-  "message": "配置更新成功",
-  "changes": ["max_concurrency"],
+  "message": "Configuration updated.",
+  "changes": ["max_concurrency: 20"],
   "restart_required": false
 }
 ```
@@ -291,23 +270,20 @@
 **可更新字段：**
 - `webui_host`
 - `webui_port`
-- `mcp_transport` (`"http"` 或 `"sse"`)
+- `mcp_transport` (`"http"` �?`"sse"`)
 - `mcp_host`
 - `mcp_port`
-- `max_concurrency`（范围：1-1000）
-- `working_dir`
+- `max_concurrency`（范围：1-1000�?- `working_dir`
 - `log_level`
 - `system_prompt`
 - `log_level` (`"trace"`、`"debug"`、`"info"`、`"warn"`、`"error"`)
 
-**注意：** 修改 `mcp_transport`、`mcp_host`、`mcp_port`、`webui_host`、`webui_port`、`log_level` 或 `working_dir` 后需要重启服务器才能完全生效。当涉及这些字段时，响应将包含 `restart_required: true`。
-
-### MCP 服务控制
+**注意�?* 修改 `mcp_transport`、`mcp_host`、`mcp_port`、`webui_host`、`webui_port`、`log_level` �?`working_dir` 后需要重启服务器才能完全生效。当涉及这些字段时，响应将包�?`restart_required: true`�?
+### 系统指标
 
 #### GET /api/system-metrics
-获取实时系统资源使用情况。
-
-**响应：**
+获取实时系统资源使用情况�?
+**响应�?*
 ```json
 {
   "cpu_percent": 12.5,
@@ -321,74 +297,64 @@
 }
 ```
 
-**字段说明：**
-- `cpu_percent`: 全局 CPU 使用率百分比（0-100）
-- `memory_total`: 总物理内存（字节）
-- `memory_used`: 已使用物理内存（字节）
-- `memory_percent`: 内存使用率百分比（0-100）
-- `cpu_cores`: 逻辑 CPU 核心数
-- `uptime_seconds`: 系统运行时间（秒）
-- `load_average`: 1分钟、5分钟、15分钟平均负载（Windows 上可能为零）
+**字段说明�?*
+- `cpu_percent`: 全局 CPU 使用率百分比�?-100�?- `memory_total`: 总物理内存（字节�?- `memory_used`: 已使用物理内存（字节�?- `memory_percent`: 内存使用率百分比�?-100�?- `cpu_cores`: 逻辑 CPU 核心�?- `uptime_seconds`: 系统运行时间（秒�?- `load_average`: 1分钟�?分钟�?5分钟平均负载（Windows 上可能为零）
 - `process_count`: 运行中的进程总数
 
 ### MCP 服务控制
 
 #### POST /api/mcp/start
-启动 MCP 服务。
-
-**响应：**
+启动 MCP 服务�?
+**响应�?*
 ```json
 {
   "success": true,
-  "message": "MCP service started"
+  "message": "MCP service status set to running. Note: full restart requires process manager."
 }
 ```
 
 #### POST /api/mcp/stop
-停止 MCP 服务。
-
-**响应：**
+停止 MCP 服务�?
+**响应�?*
 ```json
 {
   "success": true,
-  "message": "MCP service stopped"
+  "message": "MCP service status set to stopped. Note: full shutdown requires process manager."
 }
 ```
 
 #### POST /api/mcp/restart
-重启 MCP 服务。
-
-**响应：**
+重启 MCP 服务�?
+**响应�?*
 ```json
 {
   "success": true,
-  "message": "MCP service restarted"
+  "message": "MCP service status restarted. Note: for a full restart, please use your process manager."
 }
 ```
 
 ### Python 文件系统访问切换
 
 #### GET /api/python-fs-access
-获取 `execute_python` 工具的当前文件系统访问状态。
-
-**响应：**
+获取 `ExecutePython` 工具的当前文件系统访问状态�?
+**响应�?*
 ```json
 {
+  "success": true,
   "enabled": false
 }
 ```
 
 #### POST /api/python-fs-access
-启用或禁用 `execute_python` 工具的文件系统访问。
-
-**请求：**
+启用或禁�?`ExecutePython` 工具的文件系统访问�?
+**请求�?*
 ```json
 {
   "enabled": true
 }
 ```
 
-**响应：**
+**响应�?*
 ```json
 {
   "success": true,
@@ -396,28 +362,25 @@
 }
 ```
 
-**注意：** 当文件系统访问被禁用（默认）时，`execute_python` 以沙箱模式运行，`builtins.open`、`_io.FileIO` 以及 `os`/`nt`/`posix` 模块被阻止。启用后，Python 代码可以访问配置的工作目录内的文件。
-
+**注意�?* 当文件系统访问被禁用（默认）时，`ExecutePython` 以沙箱模式运行，`builtins.open`、`_io.FileIO` 以及 `os`/`nt`/`posix` 模块被阻止。启用后，Python 代码可以访问配置的工作目录内的文件�?
 ### 搜索
 
 #### GET /api/search?q={query}
-按名称或描述搜索工具。
-
-**响应：**
+按名称或描述搜索工具�?
+**响应�?*
 ```json
-["file_read", "file_search", "dir_list"]
+["Read","Grep","Glob"]
 ```
 
 ### 版本信息
 
 #### GET /api/version
-获取服务器版本及元数据。
-
-**响应：**
+获取服务器版本及元数据�?
+**响应�?*
 ```json
 {
   "name": "rust-mcp-server",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "A high-performance MCP server with WebUI control panel",
   "authors": "MCP Server Team",
   "repository": "https://github.com/yuunnn-w/Rust-MCP-Server",
@@ -428,17 +391,15 @@
 ### 实时更新 (SSE)
 
 #### GET /api/events
-服务器推送事件端点，用于实时更新。
-
-**事件类型：**
+服务器推送事件端点，用于实时更新�?
+**事件类型�?*
 
 ##### ToolCallCount
-工具调用次数变化时触发。
-
+工具调用次数变化时触发�?
 ```json
 {
   "type": "ToolCallCount",
-  "tool": "file_read",
+  "tool": "Read",
   "count": 42,
   "isCalling": false,
   "isBusy": false
@@ -446,8 +407,7 @@
 ```
 
 ##### ConcurrentCalls
-并发调用数变化时触发。
-
+并发调用数变化时触发�?
 ```json
 {
   "type": "ConcurrentCalls",
@@ -457,8 +417,7 @@
 ```
 
 ##### McpServiceStatus
-MCP 服务状态变化时触发。
-
+MCP 服务状态变化时触发�?
 ```json
 {
   "type": "McpServiceStatus",
@@ -468,14 +427,11 @@ MCP 服务状态变化时触发。
 
 ## MCP 协议
 
-MCP 服务通过 HTTP 或 SSE 使用 JSON-RPC 2.0。
-
+MCP 服务通过 HTTP �?SSE 使用 JSON-RPC 2.0�?
 基础 URL: `http://127.0.0.1:3344`
 
-### 初始化
-
-请求：
-```json
+### 初始�?
+请求�?```json
 {
   "jsonrpc": "2.0",
   "id": 1,
@@ -493,8 +449,7 @@ MCP 服务通过 HTTP 或 SSE 使用 JSON-RPC 2.0。
 
 ### 列出工具
 
-请求：
-```json
+请求�?```json
 {
   "jsonrpc": "2.0",
   "id": 2,
@@ -502,19 +457,20 @@ MCP 服务通过 HTTP 或 SSE 使用 JSON-RPC 2.0。
 }
 ```
 
-响应：
-```json
+响应�?```json
 {
   "jsonrpc": "2.0",
   "id": 2,
   "result": {
     "tools": [
       {
-        "name": "file_read",
-        "description": "并发读取一个或多个文本文件，每个文件可独立设置行号和范围",
+        "name": "Read",
+        "description": "读取文件，支持格式自动检测和模式系统（通用文件：auto/text/media；DOC/DOCX：doc_text/doc_with_images/doc_images；PPT/PPTX：ppt_text/ppt_images；PDF：pdf_text/pdf_images）。图片模式返回 Base64 编码内容供视觉模型使用。支持 image_dpi、image_format。",
         "inputSchema": {
           "type": "object",
           "properties": {
+            "path": {"type": "string", "description": "文件路径（auto 模式）"},
+            "mode": {"type": "string", "enum": ["auto", "text", "media", "doc_text", "doc_with_images", "doc_images", "ppt_text", "ppt_images", "pdf_text", "pdf_images"]},
             "files": {
               "type": "array",
               "items": {
@@ -530,14 +486,15 @@ MCP 服务通过 HTTP 或 SSE 使用 JSON-RPC 2.0。
                 },
                 "required": ["path"]
               }
-            }
-          },
-          "required": ["files"]
+            },
+            "image_dpi": {"type": "integer", "description": "幻灯片/页面渲染 DPI（默认：150）"},
+            "image_format": {"type": "string", "enum": ["png", "jpg"], "description": "渲染图片格式（默认：png）"}
+          }
         }
       },
       {
-        "name": "file_edit",
-        "description": "并发编辑一个或多个文件，支持 string_replace、line_replace、insert、delete、patch 模式，可创建新文件",
+        "name": "Edit",
+        "description": "多模式编辑：string_replace、line_replace、insert、delete、patch。复杂 Office 模式：office_insert、office_replace、office_delete、office_insert_image、office_format、office_insert_table。PDF 模式：pdf_delete_page、pdf_insert_image、pdf_insert_text、pdf_replace_text。支持 .doc/.docx/.ppt/.pptx/.xls/.xlsx。",
         "inputSchema": {
           "type": "object",
           "properties": {
@@ -547,13 +504,21 @@ MCP 服务通过 HTTP 或 SSE 使用 JSON-RPC 2.0。
                 "type": "object",
                 "properties": {
                   "path": {"type": "string"},
-                  "mode": {"type": "string"},
+                  "mode": {"type": "string", "enum": ["string_replace", "line_replace", "insert", "delete", "patch", "office_insert", "office_replace", "office_delete", "office_insert_image", "office_format", "office_insert_table", "pdf_delete_page", "pdf_insert_image", "pdf_insert_text", "pdf_replace_text"]},
                   "old_string": {"type": "string"},
                   "new_string": {"type": "string"},
                   "occurrence": {"type": "integer"},
                   "start_line": {"type": "integer"},
                   "end_line": {"type": "integer"},
-                  "patch": {"type": "string"}
+                  "patch": {"type": "string"},
+                  "markdown": {"type": "string"},
+                  "find_text": {"type": "string"},
+                  "location": {"type": "string"},
+                  "element_type": {"type": "string"},
+                  "format_type": {"type": "string"},
+                  "image_path": {"type": "string"},
+                  "slide_index": {"type": "integer"},
+                  "page_index": {"type": "integer"}
                 },
                 "required": ["path"]
               }
@@ -563,44 +528,26 @@ MCP 服务通过 HTTP 或 SSE 使用 JSON-RPC 2.0。
         }
       },
       {
-        "name": "json_query",
-        "description": "使用 JSON Pointer 语法查询 JSON 文件",
-        "inputSchema": {
-          "type": "object",
-          "properties": {
-            "path": {"type": "string"},
-            "query": {"type": "string"}
-          },
-          "required": ["path", "query"]
-        }
-      },
-      {
-        "name": "file_stat",
-        "description": "并发获取一个或多个文件或目录的元数据，对文本文件返回字符数和行数",
+        "name": "FileStat",
+        "description": "获取文件/目录元数据，或检查路径是否存在（mode: metadata/exist�?,
         "inputSchema": {
           "type": "object",
           "properties": {
             "paths": {
               "type": "array",
               "items": {"type": "string"}
+            },
+            "mode": {
+              "type": "string",
+              "enum": ["metadata", "exist"]
             }
           },
           "required": ["paths"]
         }
       },
+
       {
-        "name": "path_exists",
-        "description": "检查路径是否存在并返回其类型",
-        "inputSchema": {
-          "type": "object",
-          "properties": {
-            "path": {"type": "string"}
-          },
-          "required": ["path"]
-        }
-      },
-      {
-        "name": "git_ops",
+        "name": "Git",
         "description": "在仓库中运行 git 命令",
         "inputSchema": {
           "type": "object",
@@ -613,19 +560,8 @@ MCP 服务通过 HTTP 或 SSE 使用 JSON-RPC 2.0。
         }
       },
       {
-        "name": "env_get",
-        "description": "获取环境变量的值",
-        "inputSchema": {
-          "type": "object",
-          "properties": {
-            "name": {"type": "string"}
-          },
-          "required": ["name"]
-        }
-      },
-      {
-        "name": "execute_python",
-        "description": "执行 Python 代码，用于精确计算、数据处理和逻辑评估。将返回值赋给 __result。所有 Python 标准库模块均可使用。文件系统访问可通过 WebUI 切换。"},
+      "name": "ExecutePython",
+      "description": "执行 Python 代码，用于精确计算、数据处理和逻辑评估。将返回值赋�?__result。所�?Python 标准库模块均可使用。文件系统访问可通过 WebUI 切换�?},
         "inputSchema": {
           "type": "object",
           "properties": {
@@ -642,14 +578,13 @@ MCP 服务通过 HTTP 或 SSE 使用 JSON-RPC 2.0。
 
 ### 调用工具
 
-请求：
-```json
+请求�?```json
 {
   "jsonrpc": "2.0",
   "id": 3,
   "method": "tools/call",
   "params": {
-    "name": "file_read",
+    "name": "Read",
     "arguments": {
       "files": [
         {"path": "/path/to/file.txt", "start_line": 0, "end_line": 100}
@@ -659,8 +594,7 @@ MCP 服务通过 HTTP 或 SSE 使用 JSON-RPC 2.0。
 }
 ```
 
-成功响应（文本工具）：
-```json
+成功响应（文本工具）�?```json
 {
   "jsonrpc": "2.0",
   "id": 3,
@@ -674,29 +608,6 @@ MCP 服务通过 HTTP 或 SSE 使用 JSON-RPC 2.0。
   }
 }
 ```
-
-**image_read 响应（full 模式）：**
-```json
-{
-  "jsonrpc": "2.0",
-  "id": 3,
-  "result": {
-    "content": [
-      {
-        "type": "image",
-        "data": "iVBORw0KGgoAAAANSUhEUgAA...",
-        "mimeType": "image/png"
-      },
-      {
-        "type": "text",
-        "text": "Image: screenshot.png, Dimensions: 1920x1080, Size: 1.2 MB, Type: image/png"
-      }
-    ]
-  }
-}
-```
-
-第一个 content 项为标准 MCP `ImageContent`，包含原始 base64 数据和 MIME 类型（无 JSON 包装），使视觉模型客户端能将图片送入编码器处理。第二个项为人类可读的元数据文本。
 
 错误响应：
 ```json
@@ -717,23 +628,22 @@ MCP 服务通过 HTTP 或 SSE 使用 JSON-RPC 2.0。
 
 | 代码 | 含义 | 描述 |
 |------|------|------|
-| -32700 | 解析错误 | 无效的 JSON |
-| -32600 | 无效请求 | 无效的 JSON-RPC 请求 |
-| -32601 | 方法未找到 | 未知方法 |
-| -32602 | 无效参数 | 无效的方法参数 |
-| -32603 | 内部错误 | 服务器内部错误 |
-| -32000 | 服务器错误 | 通用服务器错误 |
-| -32001 | 工具已禁用 | 工具当前被禁用 |
-| -32002 | 安全错误 | 安全检查失败 |
+| -32700 | 解析错误 | 无效�?JSON |
+| -32600 | 无效请求 | 无效�?JSON-RPC 请求 |
+| -32601 | 方法未找�?| 未知方法 |
+| -32602 | 无效参数 | 无效的方法参�?|
+| -32603 | 内部错误 | 服务器内部错�?|
+| -32000 | 服务器错�?| 通用服务器错�?|
+| -32001 | 工具已禁�?| 工具当前被禁�?|
+| -32002 | 安全错误 | 安全检查失�?|
 
-### HTTP 状态代码
-
-| 状态 | 端点 | 含义 |
+### HTTP 状态代�?
+| 状�?| 端点 | 含义 |
 |------|------|------|
 | 200 | 全部 | 成功 |
-| 400 | `/api/config`、`/api/tool/{name}/enable` | 参数无效（如并发数越界、传输协议/日志级别非法） |
-| 404 | `/api/tool/{name}/*`、`/api/search`、未知 `/api/*` 路由 | 工具未找到或端点不存在 |
-| 500 | 全部 | 服务器内部错误 |
+| 400 | `/api/config`、`/api/tool/{name}/enable` | 参数无效（如并发数越界、传输协�?日志级别非法�?|
+| 404 | `/api/tool/{name}/*`、`/api/search`、未�?`/api/*` 路由 | 工具未找到或端点不存�?|
+| 500 | 全部 | 服务器内部错�?|
 
 **错误响应体（REST API）：**
 ```json
@@ -748,7 +658,7 @@ MCP 服务通过 HTTP 或 SSE 使用 JSON-RPC 2.0。
 ### 启用工具
 
 ```bash
-curl -X POST http://127.0.0.1:2233/api/tool/execute_command/enable \
+curl -X POST http://127.0.0.1:2233/api/tool/Bash/enable \
   -H "Content-Type: application/json" \
   -d '{"enabled": true}'
 ```
@@ -756,7 +666,7 @@ curl -X POST http://127.0.0.1:2233/api/tool/execute_command/enable \
 ### 获取工具统计
 
 ```bash
-curl http://127.0.0.1:2233/api/tool/file_read/stats
+curl http://127.0.0.1:2233/api/tool/Read/stats
 ```
 
 ### 通过 HTTP 调用 MCP 工具
@@ -769,9 +679,9 @@ curl -X POST http://127.0.0.1:3344 \
     "id": 1,
     "method": "tools/call",
     "params": {
-      "name": "calculator",
+      "name": "ExecutePython",
       "arguments": {
-        "expression": "2 + 2"
+        "code": "import math\nprint(math.pi * 2)"
       }
     }
   }'

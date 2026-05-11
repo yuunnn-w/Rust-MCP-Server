@@ -5,32 +5,122 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/)，
 本项目遵循 [语义化版本控制](https://semver.org/lang/zh-CN/)。
 
-## [Unreleased]
+## [0.4.0] - 2026-05-11
 
 ### 新增功能
-- **自定义系统提示**：新增 `--system-prompt` CLI 参数和 `MCP_SYSTEM_PROMPT` 环境变量。自定义提示追加到 MCP `initialize` 的 instructions 中，可通过 WebUI（`GET/PUT /api/config`）查看和修改。
-- **`execute_command` 自定义 Shell 路径**：新增 `shell_path` 和 `shell_arg` 参数，支持指定自定义 shell 可执行文件（如 Windows 7 + VxKex 环境的 `C:\Tools\pwh.exe`）。智能参数推断：文件名含 "powershell"/"pwsh"/"pwh" 时用 `-Command`，否则 Windows 用 `/C`、Unix 用 `-c`。
-- **CLI Help 双语输出**：`--help` 同时输出英文和中文说明，利用 clap 的 `help_template` 和所有字段的双语 `help` 注释实现。
-- **升级 `sysinfo` 至 0.38.4**：从 0.33 升级至 0.38.4，解锁更多系统信息 API。
-- **`system_info` 工具全面增强**：大幅扩展 `system_info` 工具返回的信息：
-  - **磁盘信息**：名称、挂载点、文件系统类型（HDD/SSD）、总/可用容量（GB）、使用率、是否可移动/只读
-  - **网络接口**：名称、MAC 地址、IP 地址（CIDR）、MTU、总接收/发送量（MB）
-  - **硬件温度**：组件标签、当前/最高/临界温度（°C，平台支持时）
-  - **交换空间**：总/已用/空闲交换空间（MB）及使用率
-  - **CPU 详情**：架构、频率（MHz）、物理核心数
-  - **系统详情**：启动时间（Unix 时间戳）、详细 OS 版本、发行版 ID
-- **移除 `get_if_addrs` 依赖**：`allowed_hosts` 的网卡 IP 自动检测现在使用 `sysinfo::Networks` 替代 `get_if_addrs`，减少外部依赖。
+- **旧版 Office 格式支持**：Read/Edit 工具现在通过 LibreOffice 自动转换支持旧版 .doc、.ppt 和 .xls 格式（.xls 通过 calamine 原生支持）
+- **DOCX 阅读模式**：三种模式 — `doc_text`（Markdown 输出，含标题/表格/格式）、`doc_with_images`（Markdown + 内嵌图片）、`doc_images`（仅提取图片）
+- **PPTX 幻灯片转图片模式**：`ppt_images` 模式通过 LibreOffice 将幻灯片渲染为 PNG/JPG，以 Base64 编码的 MCP ImageContent 返回，供视觉模型使用
+- **PPTX 原生图片提取（v0.4.0 更新）**：`ppt_images` 模式在 LibreOffice 不可用时，自动回退到纯 Rust 原生提取方案。通过 ZIP 解析从每张幻灯片中提取嵌入图片，并与幻灯片文本一起展示——每页先展示所有提取的图片，再展示文本内容。无需任何外部依赖。
+- **FileStat 办公文件统计**：`FileStat` 完整模式现在对办公文件（DOCX/PPTX/PDF/XLSX）返回 `document_stats` 信息，包括 `document_type`、`page_count`/`slide_count`/`sheet_count`、嵌入 `image_count` 和 `text_char_count`。帮助语言模型智能选择文本模式或图片模式。
+- **PDF 页面转图片模式**：`pdf_images` 模式通过 **pdfium-render v0.9.1**（Chromium PDF 引擎）将每页 PDF 渲染为 PNG/JPG。PDFium 二进制文件通过 `include_bytes!` + zstd 压缩直接嵌入可执行文件，运行时首次使用自动解压至临时目录加载。`build.rs` 在构建时若 `assets/` 下缺失则自动从 GitHub 下载。零运行时外部依赖
+- **复杂 DOCX 编辑**：新增 `office_insert`、`office_replace`、`office_delete`、`office_insert_image`、`office_format`、`office_insert_table` 模式，通过 Markdown 进行结构化文档操作
+- **PDF 编辑（基于 lopdf）**：新增 `pdf_delete_page`、`pdf_insert_image`、`pdf_insert_text`、`pdf_replace_text` 模式，使用纯 Rust lopdf 库
+- **基于 Markdown 的 DOCX/PDF 创建**：Write 工具支持 `office_markdown` 参数以创建带标题/表格/格式的 DOCX；通过 LibreOffice 创建 PDF
+- **基于 CSV 的 XLSX 创建**：Write 工具支持 `office_csv` 参数以创建多工作表电子表格
+- **新增依赖**：`docx-rs` v0.4、`lopdf` v0.39、`pdfium-render` v0.9.1、`zstd` v0.13、`flate2` v1.0
+- **LibreOffice 可用性检测**：服务器在启动时检测 LibreOffice 并报告可用性
+- **Archive 工具 AES-256 密码加密**：新增 `password` 参数，支持创建和提取受密码保护的 ZIP 归档
+- **Grep 工具精简输出模式**：新增 `output_format: "brief"` 仅返回文件路径和行号
+- **Windows 7 原生兼容性（自包含）**：移除 `oldwin` crate，改为在 `build.rs` 中直接集成 **VC-LTL5 v5.3.1**（`assets/vc-ltl/`，CRT 替换）和 **YY-Thunks v1.2.1**（`assets/yy-thunks/`，Win8+ API 桩代码）。两者均嵌入仓库。经 `YY.Depends.Analyzer.exe` 以 `6.1.7600` 目标验证 — 零缺失 API 条目。
+- **Windows 版本感知 `system_info`**：运行时通过 `RtlGetVersion` 检测系统版本，在低于 Windows 10 的系统上自动跳过磁盘、网络和温度信息收集
+- **Windows 可执行程序图标**：为 Windows 可执行文件添加圆角透明图标
+- **自定义系统提示词**：新增 `--system-prompt` CLI 参数和 `MCP_SYSTEM_PROMPT` 环境变量，可通过 WebUI 更新
+- **自定义 Shell 路径**：`Bash` 工具新增 `shell_path` 和 `shell_arg` 参数
+- **双语 CLI 帮助**：`--help` 输出同时显示中英文说明
+- **静态资源缓存**：添加缓存头和 ETag 支持
+- **前端 UX 改进**：添加筛选控件、模态框 ESC 关闭和加载状态
+- **PDFium 资源目录重构**：移至 `assets/pdfium/`，自动下载支持 curl→PowerShell→wget 回退链，新增 **macOS** `libpdfium.dylib` 支持
+- **包描述精简**：缩短为 "Rust Model Context Protocol (MCP) Server"
 
 ### 变更
-- **工具预设重构**：重新设计已有的 6 种预设（`minimal`、`coding`、`document`、`data_analysis`、`system_admin`、`full_power`），每种预设现在同时控制 `execute_python` 文件系统访问状态。`minimal` 保持沙箱模式（fs=false）；`coding`/`data_analysis`/`system_admin`/`full_power` 启用文件系统访问。服务器默认启动时自动应用 `minimal` 预设，使用 `--preset none` 跳过。
-- **文档全面更新**：全部 10 个 markdown 文件（README、architecture、user-guide、security、API 及其中文版）已更新，反映基于预设的工具管理、新增 `system_prompt` 功能，并修正了工具数量。
-- **更新日志年份修正**：所有发布日期从 2024/2025 修正为 2026。
-- **`system_info` 内存单位修正**：内存字段（`memory_total_mb`、`memory_used_mb`、`memory_free_mb`、`swap_total_mb` 等）现在正确通过除以 `1024 * 1024` 将 bytes 转换为 MB（此前仅除以 1024，导致数值实际为 KB 却标注为 MB）。
-- **`system_info` 数值精度**：所有浮点数值（CPU 使用率、内存使用率、交换空间使用率、磁盘使用率、温度等）现在统一保留两位小数，输出更加规范。
+- **DOCX 库迁移**：将 `docx-rust` 替换为 `docx-rs`，以获得更优的图片提取、样式解析和格式支持
+- **Read 工具重新设计**：模式系统重组 — `auto`/`text`/`media` 用于通用文件，`doc_text`/`doc_with_images`/`doc_images` 用于 DOC/DOCX，`ppt_text`/`ppt_images` 用于 PPT/PPTX，`pdf_text`/`pdf_images` 用于 PDF
+- **Read 工具扩展**：新增 `image_dpi` 和 `image_format` 参数用于幻灯片/页面渲染控制
+- **Edit 工具扩展**：Office 格式检测现在包含 .doc/.ppt/.xls；新增复杂编辑参数（`markdown`、`find_text`、`location`、`element_type`、`format_type`、`image_path`、`slide_index`、`page_index`）
+- **Write 工具扩展**：新增 `office_markdown` 和 `office_csv` 参数；支持 PDF file_type
+- **工具描述更新**：mod.rs、handler.rs 和 WebUI 中的 Read/Edit/Write 描述反映了所有新功能
+- **Read 工具图片模式**：`media`、`pdf_images`、`ppt_images`、`doc_images` 模式现在通过 MCP `ImageContent` 返回 Base64 编码的图片内容，供视觉模型（如 llama.cpp）直接使用，替代了之前的文件路径元数据
+- **Read 工具 doc_with_images 模式**：图片现在内嵌在文档文本的原始位置（通过替换 `{{IMAGE:N}}` 标记实现），而非追加到末尾
+- **Read 工具 line_numbers 参数**：默认值从 `true` 改为 `false`
+- **所有工具参数描述**：现在使用 `#[schemars(description)]` 为所有参数字段提供完整的 JSON Schema 覆盖
+- **Read 工具 ppt_images 模式**：不再强制要求 LibreOffice。当 LibreOffice 不可用时，自动回退到纯 Rust 原生提取（PPTX ZIP 嵌入图片 + ppt-rs 文本提取）。每页幻灯片先展示图片，再展示文字。
+- **Read 和 FileStat 工具描述**：更新了详细的模式选择指导、使用策略和办公文件元数据文档。
+- **FileStat 办公文件支持**：现在对 DOCX/PPTX/PDF/XLSX 文件提取并返回 `document_stats`（document_type、page/slide/sheet 数量、图片数量、文本字符数）。
+- **工具预设重构**：重新设计了 6 个预设，每个预设现在同时控制 `execute_python` 的文件系统访问状态。服务器启动时默认自动应用 `minimal` 预设。
+- **状态优化**：使用原子类型减少锁竞争
+- **前端性能改进**：搜索防抖和 Canvas 渲染优化
+- **构建系统**：移除 `oldwin`/`oldwin-targets` 依赖，`build.rs` 直接链接 VC-LTL5 `.lib` 文件和 YY-Thunks `.obj` 文件，使用 `/NODEFAULTLIB` 精确控制链接顺序
 
 ### 修复
-- **WebUI 预设国际化**：预设按钮（`data_analysis`、`system_admin`）现在正确显示中文名称。"当前："标签现在显示翻译后的预设名而非英文。
-- **WebUI 毛玻璃闪烁**：修复了在模态遮罩层或侧边栏上移动鼠标时背景不断闪烁的问题。移除了 `.modal` 和 `.modal-content` 上冲突的 `transform: translateZ(0)` / `will-change`，改为 `contain: layout paint` 隔离渲染层。优化 `bindCardTilt` 使用 `requestAnimationFrame` 批量更新 transform。
+- **PPTX 文本提取失败**：修复了使用非标准占位符类型的文件幻灯片文本为空的问题。改用底层 `PresentationReader` API，可提取所有形状文本（不限于标准占位符分类）
+- **旧版格式不兼容**：.doc、.ppt 文件现在可通过 LibreOffice 转换读取；.xls 文件通过 calamine 原生支持
+- **DOCX 图片提取**：嵌入 DOCX 文件的图片现在可提取到临时文件，返回尺寸/格式元数据
+- **PDF 文本提取乱码修复**：从 `pdf` crate 原始字节解码切换为 `lopdf::Document::extract_text()`，正确处理字体编码、ToUnicode CMap 和 CJK 文本
+- **lopdf 良性警告抑制**：将 `lopdf` 日志过滤级别设为 `error`，抑制良性的 Type3 字体编码警告，避免日志输出杂乱
+- 修复 broadcast 接收器在延迟时崩溃导致工具列表变更通知丢失的问题
+- 修复 edit 工具行替换/插入/删除模式下换行符（\r\n）损坏的问题
+- 修复 rename 自动重命名冲突解决中的死代码
+- 修复 archive.rs `add_dir_to_zip` 和 read.rs `offset_chars` 中的潜在 OOM 问题
+- 修复 enhanced_glob 字符类解析中错误转义 `[]` 的问题
+- 修复 system_metrics 中 `process_count` 始终为 0 的问题
+- 修复 `data_analysis` 预设中缺少 Diff 和 Archive 工具的问题
+- 修复 web 处理器中错误响应使用 `String` 而非 `ApiError` 的问题
+- 修复 WebUI 配置渲染中的 XSS 漏洞
+- 修复多处可能引起 panic 的 `unwrap()` 调用
+- 修复 bash 同步模式超时处理中的竞态条件
+- 修复 office_utils 中临时文件的符号链接攻击向量
+- 修复 web_fetch 中未检查 HTTP 状态码的问题
+- 修复 web_fetch 和 web_search 中每次调用都重新编译正则表达式的问题
+- 修复 SSE 序列化失败时静默错误的问题
+- **WebUI 预设国际化**：预设按钮现在正确显示中文名称
+- **WebUI 毛玻璃闪烁**：修复鼠标移动到模态框上方时 backdrop-filter 动画冲突
+- **便签搜索**：修复便签搜索未包含标签和分类
+- **ZIP 路径遍历**：修复归档解压中的安全漏洞
+- **便签内容 UTF-8 截断**：修复在非 UTF-8 边界处截断时的 panic
+- **Git diff 路径**：修复子目录中的路径问题
+- **Python 线程泄漏**：修复代码执行期间的泄漏
+- **异步运行时阻塞**：修复 `image_read`、`file_search` 和 `diff` 中的同步 I/O 阻塞
+- **Handler 任务泄漏**：修复客户端重连时的任务泄漏
+- **`set_level` 实现**：现在可以正确重载日志过滤器
+- **文档一致性审查**：修复所有 md 文件中文档与代码之间的多处不一致
+- **PPTX 关系 XML 解析**：修复正则要求属性顺序（Target 必须在 Type 之前）导致的"PPTX contains no slides"错误
+- **`parse_relationship_targets`**：重写为独立解析各属性，不依赖 XML 属性顺序
+- **v0.4.0 审计修复**：
+  - 修复 `windows_version.rs` 缺少非 Windows 平台的代码分支导致 Linux/macOS 编译失败
+  - 修复 WebP VP8L 图片尺寸检测使用错误字节偏移
+  - 修复 handler.rs 中的阻塞 `std::fs::read_dir` 调用
+  - 修复 MCP 初始化指令中硬编码的 WebUI URL
+  - 修复工具启用检查与并发许可获取之间的 TOCTOU 竞态条件
+  - 统一 handler.rs 与 tools/mod.rs 之间的工具描述（11 处不一致）
+  - 修复 `system_admin` 预设与 `coding` 预设完全相同的问题
+  - 移除 `default_disable_tools` 中的死引用 `HttpRequest`
+  - 修复高负载下信号量缩减静默失败
+  - 修复 `pdf_replace_text` 忽略 `page_index` 参数
+  - 修复 `edit_docx_insert` 忽略 `find_text` 和 `location` 参数
+  - 移除 `edit_docx_insert` 中的重复 `read_docx` 调用
+  - 修复 PPTX 文本提取中的 N× 临时文件写入性能问题
+  - 为 `WebFetch` 添加响应大小限制（50MB）
+  - 将阻塞的 sysinfo 调用包裹在 `spawn_blocking` 中
+  - 修复 update_config 中持有配置锁时进行阻塞 I/O
+  - 在 `extract_text_from_bytes` 中添加旧格式保护检查
+  - 修复 WebUI 并发 HUD 始终重置为 0
+  - 修复 WebUI 终端 DOM 内存泄漏
+  - 修复 `apply_format_to_docx` 中标题格式的 occurrence 跟踪
+  - 修复 `edit_pptx_string` 中 PPTX 图形重复替换
+  - 修复 `resolve_shell` 中 shell_arg 验证
+  - 修复异步上下文中的 `std::sync::Mutex` 阻塞
+  - WebUI 数据加载从 `Promise.all` 切换为 `Promise.allSettled`
+  - 移除未使用的 `chart.min.js`（200KB 死代码）
+
+### 移除
+- **HttpRequest 工具**：因功能不完整而废弃；WebFetch 提供网页内容抓取功能。已从 mod.rs、handler.rs、presets.rs 及所有预设中移除。工具总数从 22 减少至 21。
+- **`oldwin` crate**：替换为直接的 VC-LTL5 + YY-Thunks 集成
+- **`chart.min.js`**：移除未使用的 200KB Chart.js 库，WebUI 图表使用原生 Canvas API 渲染
+- **`.cargo/config.toml` `/FORCE:MULTIPLE` 标志**：移除 `oldwin` 后不再需要
+
+### 安全
+- NotebookEdit 写操作现在强制使用工作目录沙箱
 
 ## [0.3.0] - 2026-05-05
 

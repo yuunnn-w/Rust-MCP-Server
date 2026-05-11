@@ -4,19 +4,18 @@
 
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
-│                        Rust MCP Server v0.3.0                       │
+│                        Rust MCP Server v0.4.0                       │
 ├─────────────────────────────────────────────────────────────────────┤
 │  ┌─────────────────┐  ┌─────────────────┐  ┌─────────────────────┐  │
 │  │   WebUI (Axum)  │  │  MCP Service    │  │   Tool Registry     │  │
 │  │                 │  │   (rmcp)        │  │                     │  │
 │  │  ┌───────────┐  │  │                 │  │  ┌───────────────┐  │  │
-│  │  │ Static    │  │  │  ┌──────────┐   │  │  │ dir_list      │  │  │
-│  │  │ Files     │  │  │  │ HTTP/SSE │   │  │  │ file_read     │  │  │
-│  │  └───────────┘  │  │  │ Transport│   │  │  │ file_write    │  │  │
-│  │  ┌───────────┐  │  │  └──────────┘   │  │  │ execute_cmd   │  │  │
-│  │  │ execute_python│  │  │
-│  │  │ REST API  │  │  │                 │  │  │ calculator    │  │  │
-│  │  │ /api/*    │  │  │                 │  │  │ ... (25 tools)│  │  │
+│  │  │ Static    │  │  │  ┌──────────┐   │  │  │ Glob         │  │  │
+│  │  │ Files     │  │  │  │ HTTP/SSE │   │  │  │ Read         │  │  │
+│  │  └───────────┘  │  │  │ Transport│   │  │  │ Write        │  │  │
+│  │  ┌───────────┐  │  │  └──────────┘   │  │  │ Bash         │  │  │
+│  │  │ REST API  │  │  │                 │  │  │ ... (21 tools)│  │  │
+│  │  │ /api/*    │  │  │                 │  │  └───────────────┘  │  │
 │  │  └───────────┘  │  │                 │  │  └───────────────┘  │  │
 │  │  ┌───────────┐  │  │                 │  │                     │  │
 │  │  │ SSE       │  │  │                 │  │                     │  │
@@ -66,9 +65,9 @@ The WebUI provides a modern control panel for managing the MCP server.
 - `GET /api/version` - Get server version information
 - `GET /api/config` - Get configuration
 - `PUT /api/config` - Update configuration
-- `POST /api/mcp/start` - Start MCP service
-- `POST /api/mcp/stop` - Stop MCP service
-- `POST /api/mcp/restart` - Restart MCP service
+- `POST /api/mcp/start` - Toggle `mcp_running` state flag to `true` (does not control actual process)
+- `POST /api/mcp/stop` - Toggle `mcp_running` state flag to `false` (does not control actual process)
+- `POST /api/mcp/restart` - Toggle `mcp_running` state flag (does not control actual process; full restart requires external process manager)
 - `GET /api/python-fs-access` - Get `execute_python` filesystem access status
 - `POST /api/python-fs-access` - Toggle `execute_python` filesystem access
 
@@ -91,60 +90,60 @@ Implements the Model Context Protocol using the `rmcp` crate.
 
 ### Tool Registry
 
-25 built-in tools organized by category:
+21 built-in tools organized by category:
 
-#### File Operations (8 tools)
+#### File Operations (6 tools)
 | Tool | Description | Dangerous | Working Dir Restriction |
 |------|-------------|-----------|------------------------|
-| `dir_list` | List directory contents with tree structure (max depth 5). Returns char_count and line_count for UTF-8 text files | No | No |
-| `file_read` | Read one or more text files concurrently with line range support | No | No |
-| `file_search` | Search for keyword in file or directory (max depth 5) | No | No |
-| `file_write` | Write content to one or more files concurrently (create/append/overwrite) | Yes | Yes |
-| `file_ops` | Copy, move, delete, or rename one or more files concurrently | Yes | Yes |
-| `file_edit` | Edit one or more files concurrently (string_replace, line_replace, insert, delete, patch). Can create new files | Yes | Yes |
-| `file_stat` | Get metadata for one or more files/directories concurrently. Returns text file info for UTF-8 files | No | No |
-| `path_exists` | Lightweight path existence check | No | No |
+| `Glob` | List directory contents with enhanced filtering (max depth 10). Supports multi-pattern glob/regex matching, exclude patterns, file size/time filters. Returns char_count and line_count for UTF-8 text files | No | No |
+| `Read` | Read files with format auto-detection and mode system. Supports text/auto/media modes for generic files; doc_text/doc_with_images/doc_images for DOC/DOCX; ppt_text/ppt_images for PPT/PPTX; pdf_text/pdf_images for PDF. `ppt_images` uses LibreOffice (best quality) if available, or native pure Rust extraction (embedded images + text per slide) otherwise. Recommendation: use FileStat first to check document stats, then choose optimal mode. Image modes return base64-encoded ImageContent. | No | No |
+| `Grep` | Search pattern in files with enhanced filtering (max depth 10). Supports regex, case-sensitive, whole-word, multiline modes. Searches office documents text content. | No | No |
+| `Write` | Write content to files concurrently (create/append/overwrite). Supports creating DOCX (office_markdown), XLSX (office_csv), PDF (office_markdown), IPYNB files. | Yes | Yes |
+| `FileOps` | Copy, move, delete, or rename files concurrently. Supports dry_run preview and conflict_resolution. | Yes | Yes |
+| `Edit` | Multi-mode editing: string_replace, line_replace, insert, delete, patch. Complex office modes (office_insert, office_replace, office_delete, office_insert_image, office_format, office_insert_table) for DOCX. PDF modes (pdf_delete_page, pdf_insert_image, pdf_insert_text, pdf_replace_text) via lopdf. Supports .doc/.docx/.ppt/.pptx/.xls/.xlsx. | Yes | Yes |
 
-#### Query & Environment Tools (3 tools)
+#### Query & Data Tools (2 tools)
 | Tool | Description | Dangerous | Working Dir Restriction |
 |------|-------------|-----------|------------------------|
-| `json_query` | Query a JSON file using JSON Pointer syntax | No | No |
-| `git_ops` | Run git commands in a repository | No | No |
-| `env_get` | Get the value of an environment variable | No | No |
+| `FileStat` | Get metadata for files/directories concurrently. mode="exist" for lightweight existence check. Full mode returns text file info for UTF-8 files plus `document_stats` for office files (DOCX/PPTX/PDF/XLSX) with page/slide/sheet count, embedded image count, and text character count. | No | No |
+| `Git` | Run git commands (status, diff, log, branch, show). Supports path filtering and max_count. | No | No |
 
-#### System Tools (4 tools)
+#### System Tools (3 tools)
 | Tool | Description | Dangerous | Working Dir Restriction |
 |------|-------------|-----------|------------------------|
-| `process_list` | List system processes | No | No |
-| `system_info` | Get comprehensive system information including OS, CPU, memory, swap, disks, network interfaces, and hardware temperature | No | No |
-| `execute_command` | Execute shell command in specified directory | Yes | Yes |
-| `execute_python` | Execute Python code. All Python standard library modules are available. Filesystem access is toggleable via WebUI. | No | Yes (when fs access enabled) |
+| `SystemInfo` | Get system information including processes via sections parameter. Disk/network/temperature data omitted on legacy Windows. | No | No |
+| `Bash` | Execute shell command with optional working_dir, stdin, async_mode. Use Monitor for async commands. | Yes | Yes |
+| `ExecutePython` | Execute Python code. All Python standard library modules available. Filesystem access toggleable via WebUI. | No | Yes (when fs access enabled) |
+
+#### Network Tools (1 tool)
+| Tool | Description | Dangerous | Working Dir Restriction |
+|------|-------------|-----------|------------------------|
+| `WebFetch` | Fetch and parse content from a URL with extract_mode (text/html/markdown) | No | No |
 
 #### Utility Tools (4 tools)
-| Tool | Description | Dangerous |
-|------|-------------|-----------|
-| `calculator` | Calculate mathematical expressions | No |
-| `datetime` | Get current date and time in China format | No |
-| `base64_codec` | Encode or decode base64 strings | No |
-| `hash_compute` | Compute hash (MD5, SHA1, SHA256) of string or file | No |
-
-#### Clipboard & Archive Tools (2 tools)
 | Tool | Description | Dangerous | Working Dir Restriction |
 |------|-------------|-----------|------------------------|
-| `clipboard` | Read or write system clipboard content (text or image) | No | No |
-| `archive` | Create, extract, list, or append ZIP archives | Yes | Yes |
+| `Clipboard` | Read or write system clipboard content (text or image). Cross-platform. | No | No |
+| `Archive` | Create, extract, list, or append ZIP archives with AES-256 password encryption. Supports deflate and zstd compression. | Yes | Yes |
+| `Diff` | Compare text, files, or directories with multiple output formats. Supports ignore_blank_lines. | No | Yes (file/dir modes) |
+| `NoteStorage` | AI short-term memory scratchpad with export/import. Notes auto-expire after 30 minutes. | No | No |
 
-#### Diff & Note Tools (2 tools)
+#### Web & Interaction Tools (2 tools)
 | Tool | Description | Dangerous | Working Dir Restriction |
 |------|-------------|-----------|------------------------|
-| `diff` | Compare text, files, or directories with multiple output formats | No | Yes (file/dir modes) |
-| `note_storage` | In-memory temporary scratchpad for AI short-term memory | No | No |
+| `WebSearch` | Search the web via DuckDuckGo with optional region/language filters | No | No |
+| `AskUser` | Prompt the user for input or confirmation with optional timeout and default_value | No | No |
 
-#### Network & Image Tools (2 tools)
+#### Task Management (1 tool)
 | Tool | Description | Dangerous | Working Dir Restriction |
 |------|-------------|-----------|------------------------|
-| `http_request` | Make HTTP GET or POST requests | No | No |
-| `image_read` | Read image file and return MCP-standard ImageContent + TextContent metadata | No | No |
+| `Task` | Unified task management with CRUD operations via operation parameter (create/list/get/update/delete) | No | No |
+
+#### Office & Monitoring Tools (2 tools)
+| Tool | Description | Dangerous | Working Dir Restriction |
+|------|-------------|-----------|------------------------|
+| `NotebookEdit` | Read, write, and edit Jupyter .ipynb notebook files. Write operations sandboxed to working directory. | Yes | Yes |
+| `Monitor` | Monitor long-running Bash commands started with async=true. Operations: stream, wait, signal. | No | No |
 
 ### Resources
 
@@ -254,13 +253,13 @@ Output Truncation (100KB limit)
 | Dangerous Commands | `--allow-dangerous-commands` | `MCP_ALLOW_DANGEROUS_COMMANDS` | (none) |
 
 **Tool Presets:**
-The server starts with the `minimal` preset by default (16 tools enabled, `execute_python` sandboxed). Available presets:
-- `minimal`: 16 tools, `execute_python` fs=false
-- `coding`: 23 tools, `execute_python` fs=true
-- `document`: 16 tools, `execute_python` fs=false
-- `data_analysis`: 18 tools, `execute_python` fs=true
-- `system_admin`: 20 tools, `execute_python` fs=true
-- `full_power`: 25 tools, `execute_python` fs=true
+The server starts with the `minimal` preset by default (9 tools enabled, `execute_python` sandboxed). Available presets:
+- `minimal`: 9 tools, `ExecutePython` fs=false
+- `coding`: 20 tools, `ExecutePython` fs=true
+- `data_analysis`: 15 tools, `ExecutePython` fs=true
+- `system_admin`: 20 tools, `ExecutePython` fs=true
+- `research`: 10 tools, `ExecutePython` fs=false
+- `full_power`: 21 tools, `ExecutePython` fs=true
 
 Use `--preset <name>` to set the startup preset, or `--preset none` to skip auto-applying.
 
@@ -274,6 +273,9 @@ Use `--preset <name>` to set the startup preset, or `--preset none` to skip auto
 - **CLI Parsing**: clap
 - **Concurrency**: tokio::sync (Semaphore, RwLock)
 - **Collections**: dashmap (concurrent HashMap)
+- **Office Documents**: docx-rs v0.4 (DOCX reading/writing), lopdf v0.39 (PDF editing/text extraction), calamine (XLS/XLSX reading)
+- **PDF Rendering**: pdfium-render v0.9.1 (PDF page-to-image rendering; PDFium library pre-bundled in assets/, auto-downloaded by build.rs if missing)
+- **Document Conversion**: LibreOffice (detected at startup, used for legacy .doc/.ppt and PPTX slide rendering — PPTX now has pure Rust native fallback when LibreOffice unavailable)
 - **System Metrics**: sysinfo (CPU, memory, process monitoring)
 
 ---

@@ -34,8 +34,8 @@ Rust MCP Server 是一个使用 Rust 构建的高性能 [模型上下文协议 (
 ## 功能特性
 
 ### 核心功能
-- **25 个内置工具**: 文件操作、HTTP 请求、计算、系统信息、Base64 编解码、Git 操作、JSON 查询、Python 代码执行、剪贴板、归档、差异比较、便签存储等
-- **工具预设**: 6 种内置预设（minimal、coding、document、data_analysis、system_admin、full_power），一键切换工具配置
+- **21 个内置工具**: 文件操作、办公文档支持（.docx、.pptx、.xlsx、.pdf、.ipynb）、通过 pdfium-render 实现 PDF 页面转图片渲染（预置 PDFium 库，构建时自动下载）、HTTP 请求、Git 操作、Python 代码执行、剪贴板、归档、差异比较、便签存储、任务管理、网页搜索、笔记本编辑、命令监控等
+- **工具预设**: 6 种内置预设（minimal、coding、data_analysis、system_admin、research、full_power），一键切换工具配置
 - **系统提示**: 通过 `--system-prompt` 或 WebUI 自定义追加到 MCP `initialize` 响应的 instructions
 - **WebUI 控制面板**: Cyberpunk AI Command Center 主题，玻璃态 HUD、动态背景、终端日志流、3D 卡片悬浮效果
 - **实时更新**: 基于 SSE 的实时状态更新
@@ -57,46 +57,50 @@ Rust MCP Server 是一个使用 Rust 构建的高性能 [模型上下文协议 (
 以下读操作工具**不受工作目录限制**，可访问任意路径：
 
 | 工具 | 描述 | 危险 |
-|------|-------------|------|
-| `dir_list` | 树形或扁平结构列出目录内容，包含文本文件元数据（字符数、行数） | 否 |
-| `file_read` | 并发读取一个或多个文本文件，支持行范围和行高亮 | 否 |
-| `file_search` | 搜索关键词，支持详细/紧凑/位置三种输出模式 | 否 |
-| `file_stat` | 并发获取一个或多个文件或目录的元数据，包含文本检测（is_text、字符数、行数） | 否 |
-| `path_exists` | 轻量级路径存在性检查 | 否 |
-| `json_query` | 使用 JSON Pointer 语法查询 JSON 文件 | 否 |
-| `image_read` | 读取图像文件，返回标准 MCP ImageContent（供视觉编码器使用）及元数据 | 否 |
+|------|------|------|
+| `Glob` | 列出目录内容，支持增强过滤（最大深度10）。多模式 glob/regex 匹配、排除模式、文件大小/时间过滤。 | 否 |
+| `Read` | 读取文件，支持模式系统：`auto`/`text`/`media` 用于通用文件，`doc_text`/`doc_with_images`/`doc_images` 用于 DOC/DOCX，`ppt_text`/`ppt_images` 用于 PPT/PPTX（LibreOffice 不可用时纯 Rust 原生回退），`pdf_text`/`pdf_images` 用于 PDF。图片模式返回 Base64 编码的图片内容，供视觉模型直接使用（如 llama.cpp）。支持 image_dpi、image_format。建议先用 FileStat 查看统计信息。 | 否 |
+| `Grep` | 在文件中搜索模式，支持增强过滤。正则、整词、多行、办公文档搜索。 | 否 |
+| `FileStat` | 获取文件/目录元数据。mode="exist" 用于轻量级存在性检查。完整模式对办公文件（DOCX/PPTX/PDF/XLSX）返回 `document_stats`（页面/幻灯片/工作表数量、嵌入图片数量、文本字符数）。 | 否 |
 
 #### 文件操作（危险 / 默认禁用）
 以下写操作工具**受工作目录限制**：
 
 | 工具 | 描述 | 安全检查 |
-|------|-------------|----------|
-| `file_edit` | 多模式编辑：string_replace、line_replace、insert、delete、patch。可创建新文件。支持并发批量操作。 | 工作目录检查 |
-| `file_write` | 并发写入一个或多个文件 | 工作目录检查 |
-| `file_ops` | 并发复制、移动、删除或重命名一个或多个文件 | 工作目录检查 |
+|------|------|----------|
+| `Edit` | 多模式编辑：string_replace、line_replace、insert、delete、patch。复杂 Office 模式：office_insert、office_replace、office_delete、office_insert_image、office_format、office_insert_table。PDF 模式：pdf_delete_page、pdf_insert_image、pdf_insert_text、pdf_replace_text。支持 .doc/.docx/.ppt/.pptx/.xls/.xlsx。 | 工作目录检查 |
+| `Write` | 写入文件内容。支持创建 .docx（office_markdown）、.xlsx（office_csv）、.pdf（office_markdown）、.ipynb 文件。 | 工作目录检查 |
+| `FileOps` | 复制、移动、删除或重命名文件。dry_run 预览、conflict_resolution。 | 工作目录检查 |
 
 #### 系统与网络工具
 | 工具 | 描述 | 默认状态 |
-|------|-------------|----------|
-| `execute_command` | 执行带安全检查的 shell 命令，支持指定解释器和自定义 shell 路径 | 禁用 |
-| `process_list` | 列出系统进程 | 禁用 |
-| `system_info` | 获取全面的系统信息（操作系统、CPU、内存、交换空间、磁盘、网络、温度） | 禁用 |
-| `http_request` | 发起 HTTP GET/POST/PUT/DELETE/PATCH/HEAD 请求 | 禁用 |
-| `git_ops` | 运行 git 命令（status、diff、log、branch、show） | 启用 |
-| `env_get` | 获取环境变量值 | 启用 |
-| `execute_python` | 执行 Python 代码。所有 Python 标准库模块均可使用。文件系统访问可通过 WebUI 切换。 | 启用 |
+|------|------|----------|
+| `Bash` | 执行 shell 命令，支持 working_dir、stdin、async_mode。使用 Monitor 监控异步命令。 | 禁用 |
+| `SystemInfo` | 获取系统信息，支持 sections 参数（含进程列表）。 | 禁用 |
+| `Git` | 运行 git 命令（status、diff、log、branch、show），支持 path 和 max_count。 | 启用 |
+| `ExecutePython` | 执行 Python 代码。所有 Python 标准库模块均可使用。文件系统访问可通过 WebUI 切换。 | 启用 |
 
 #### 实用工具
 | 工具 | 描述 |
-|------|-------------|
-| `calculator` | 计算数学表达式 |
-| `datetime` | 获取当前日期/时间（本地时区） |
-| `base64_codec` | Base64 编码/解码 |
-| `hash_compute` | 计算 MD5/SHA1/SHA256 哈希 |
-| `clipboard` | 读写系统剪贴板（文本和图片） |
-| `archive` | 创建、解压、列出、追加 ZIP 归档 |
-| `diff` | 比较文本、文件或目录差异，支持多种输出格式 |
-| `note_storage` | AI 短期内存便签本（30 分钟无操作自动清空） |
+|------|------|
+| `Clipboard` | 读写系统剪贴板（文本和图片） |
+| `Archive` | 创建、解压、列出、追加 ZIP 归档，支持 deflate/zstd 压缩和 AES-256 密码加密 |
+| `Diff` | 比较文本、文件或目录差异，支持 ignore_blank_lines 和多种输出格式 |
+| `NoteStorage` | AI 短期内存便签本，支持 export/import（30 分钟无操作自动清空） |
+
+#### 任务、网络与交互工具
+| 工具 | 描述 | 默认状态 |
+|------|------|----------|
+| `Task` | 统一任务管理（通过 operation 参数支持 create/list/get/update/delete） | 禁用 |
+| `WebSearch` | 使用可配置的搜索引擎搜索网页，支持 region/language 过滤 | 启用 |
+| `WebFetch` | 抓取 URL 内容，支持 extract_mode（text/html/markdown） | 启用 |
+| `AskUser` | 向用户提问或请求确认，支持 timeout 和 default_value | 启用 |
+
+#### 办公文档与监控工具
+| 工具 | 描述 | 默认状态 |
+|------|------|----------|
+| `NotebookEdit` | 读取、写入和编辑 Jupyter .ipynb 笔记本文件 | 启用 |
+| `Monitor` | 监控长时间运行的 Bash 命令（stream、wait、signal） | 启用 |
 
 ## 快速开始
 
@@ -123,14 +127,53 @@ cd Rust-MCP-Server
 cargo build --release
 ```
 
+### 资源依赖
+
+项目包含一些预打包的静态资源，`build.rs` 会在构建时自动下载缺失的文件。以下是完整参考。
+
+#### 预打包资源（已提交到 Git）
+
+| 路径 | 用途 | 来源 |
+|------|------|------|
+| `assets/vc-ltl/x64/*.lib` | VC-LTL5 CRT 替换（Win7 x64） | [VC-LTL5 v5.3.1](https://github.com/Chuyu-Team/VC-LTL5/releases) |
+| `assets/vc-ltl/x86/*.lib` | VC-LTL5 CRT 替换（Win7 x86） | 同上 |
+| `assets/yy-thunks/YY_Thunks_for_Win7.obj` | Win8+ API 桩代码（Win7 x64） | [YY-Thunks v1.2.1](https://github.com/Chuyu-Team/YY-Thunks/releases) |
+| `assets/yy-thunks/YY_Thunks_for_Win7_x86.obj` | Win8+ API 桩代码（Win7 x86） | 同上 |
+| `assets/icon.ico`, `assets/icon.png` | 应用图标 | — |
+
+#### 自动下载资源（由 build.rs 下载和生成）
+
+| 文件 | 用途 | 是否自动？ |
+|------|------|------------|
+| `assets/pdfium/pdfium.dll` / `.so` / `.dylib` | PDFium 原生库，用于 PDF 页面渲染 | 从 [pdfium-binaries](https://github.com/bblanchon/pdfium-binaries/releases) 自动下载 |
+| `assets/pdfium/pdfium-*.tgz` | PDFium 下载压缩包 | 自动下载 |
+| `assets/pdfium/pdfium.*.zst` | Zstd 压缩后的 PDFium（编译时嵌入二进制） | 自动从库文件生成 |
+
+> **注意**：如果自动下载失败（如无网络、GitHub 限速），`build.rs` 会打印详细说明。你也可以手动将 PDFium 库文件或其 `.tgz` 压缩包放置到 `assets/pdfium/`。
+
+#### Windows 7 兼容性资源（仅 Win7 Target 需要）
+
+仅在 `--target x86_64-win7-windows-msvc` 构建时需要：
+
+| 路径 | 下载 |
+|------|------|
+| `assets/vc-ltl/{x64,x86}/*.lib` | [VC-LTL5 Binary v5.3.1](https://github.com/Chuyu-Team/VC-LTL5/releases/download/v5.3.1/VC-LTL5-Binary-v5.3.1.7z) — 解压 `TargetPlatform/6.0.6000.0/lib/{x64,Win32}/` |
+| `assets/yy-thunks/YY_Thunks_for_Win7.obj` | [YY-Thunks-Objs.zip v1.2.1](https://github.com/Chuyu-Team/YY-Thunks/releases/download/v1.2.1/YY-Thunks-Objs.zip) — 解压 `objs/x64/YY_Thunks_for_Win7.obj` |
+| `assets/yy-thunks/YY_Thunks_for_Win7_x86.obj` | 同上 — 解压 `objs/x86/YY_Thunks_for_Win7.obj` |
+
 #### Windows 7 兼容性编译
 
-若需要在 Windows 7 平台上运行，请使用以下命令进行交叉编译：
+本服务器通过两层嵌入式兼容层在 Windows 7 上**原生运行**：
+
+- **VC-LTL5 v5.3.1**（`assets/vc-ltl/`）— 将 UCRT/VCRUNTIME CRT 替换为 `msvcrt.dll`，消除 Win7 上不存在的 `api-ms-win-crt-*` 和 `VCRUNTIME140.dll` 导入
+- **YY-Thunks v1.2.1**（`assets/yy-thunks/`）— 为 Windows 8+ API 提供运行时桩代码，回退到旧版等效实现
 
 ```bash
 rustup update nightly
 cargo +nightly build -Z build-std=std,panic_abort --target x86_64-win7-windows-msvc --release
 ```
+
+> **注意**：在 Windows 7 上，`system_info` 工具会自动返回有限的信息（CPU、内存和操作系统基本信息），并跳过磁盘、网络和硬件温度枚举，以避免 `sysinfo` crate 的兼容性问题。
 
 ### 使用方法
 
@@ -171,7 +214,7 @@ http://127.0.0.1:2233
 | `--mcp-port` | `MCP_PORT` | `3344` | MCP 服务端口 |
 | `--max-concurrency` | `MCP_MAX_CONCURRENCY` | `10` | 最大并发调用数 |
 | `--working-dir` | `MCP_WORKING_DIR` | `.` | 文件操作工作目录 |
-| `--preset` | `MCP_PRESET` | `minimal` | 启动工具预设: minimal/coding/document/data_analysis/system_admin/full_power/none |
+| `--preset` | `MCP_PRESET` | `minimal` | 启动工具预设: minimal/coding/data_analysis/system_admin/research/full_power/none |
 | `--system-prompt` | `MCP_SYSTEM_PROMPT` | - | 自定义系统提示，追加到 MCP instructions |
 | `--disable-tools` | `MCP_DISABLE_TOOLS` | 见下文 | 在预设基础上额外禁用的工具 |
 | `--allow-dangerous-commands` | `MCP_ALLOW_DANGEROUS_COMMANDS` | - | 允许的危险命令 ID |
@@ -182,12 +225,12 @@ http://127.0.0.1:2233
 
 **工具预设：**
 服务器默认以 `minimal` 预设启动。使用 `--preset <name>` 选择其他预设，或 `--preset none` 跳过自动应用。
-- **minimal**（16 个工具）：安全只读工具 + 沙箱 Python
-- **coding**（23 个工具）：开发相关，包含文件编辑和命令执行
-- **document**（16 个工具）：文档处理，包含文件写入和剪贴板
-- **data_analysis**（18 个工具）：数据分析，包含计算器、Python 和差异比较
-- **system_admin**（20 个工具）：系统管理，包含系统信息和进程列表
-- **full_power**（25 个工具）：启用全部工具
+- **minimal**（9 个工具）：安全只读工具 + 沙箱 Python
+- **coding**（20 个工具）：开发相关，包含文件编辑、任务管理和命令执行
+- **data_analysis**（15 个工具）：数据分析，包含 Python、差异比较、归档和网络工具
+- **system_admin**（20 个工具）：系统管理，包含系统信息、进程、命令和文件操作
+- **research**（10 个工具）：研究与文档处理，包含网页搜索、网页抓取和文件读取
+- **full_power**（21 个工具）：启用全部工具
 
 ### 危险命令 ID
 
@@ -222,7 +265,7 @@ http://127.0.0.1:2233
 
 ### 命令执行安全
 
-`execute_command` 工具实现了多层安全防护：
+`Bash` 工具实现了多层安全防护：
 
 1. **工作目录限制**: 命令只能在配置的工作目录内操作
 2. **危险命令检测**: 阻止已知的危险命令（见上表）
@@ -232,9 +275,9 @@ http://127.0.0.1:2233
 
 ### 文件操作安全
 
-读操作类工具（`dir_list`、`file_read`、`file_search`、`file_stat`、`path_exists`、`json_query`、`image_read`、`hash_compute`、`git_ops`）不受工作目录限制，可访问任意路径。
+只读文件工具（`Glob`、`Read`、`Grep`、`FileStat`、`Git`）不受工作目录限制，可访问任意路径。
 
-写操作类工具（`file_write`、`file_edit`、`file_ops`）以及 `execute_command`、`execute_python` 被限制在配置的工作目录内：
+写操作类工具（`Write`、`Edit`、`FileOps`）以及 `Bash`、`ExecutePython` 被限制在配置的工作目录内：
 - 路径遍历攻击（`../etc/passwd`）被阻止
 - 符号链接逃逸被阻止
 - 工作目录外的绝对路径被拒绝
@@ -242,23 +285,23 @@ http://127.0.0.1:2233
 ### 安全流程示例
 
 ```
-用户: execute_command("rm -rf /")
+用户: Bash("rm -rf /")
 服务器: "安全警告：检测到危险命令 'rm (删除文件)'。
         此命令可能对系统或数据造成损害。
         请向用户确认是否执行此命令。
-        如果用户同意，请再次调用 execute_command 工具。"
+        如果用户同意，请再次调用 Bash 工具。"
 
-用户: execute_command("rm -rf /")  [5分钟内第二次调用]
+用户: Bash("rm -rf /")  [5分钟内第二次调用]
 服务器: [命令在确认后执行]
 ```
 
 ## 文档
 
-- [API 文档](docs/api.md) - REST API 参考
-- [架构说明](docs/architecture.md) - 系统架构和设计
-- [用户指南](docs/user-guide.md) - 详细用户指南
-- [安全指南](docs/security.md) - 安全特性和最佳实践
-- [贡献指南](CONTRIBUTING.md) - 贡献指南
+- [API 文档](docs/api-zh.md) - REST API 参考
+- [架构说明](docs/architecture-zh.md) - 系统架构和设计
+- [用户指南](docs/user-guide-zh.md) - 详细用户指南
+- [安全指南](docs/security-zh.md) - 安全特性和最佳实践
+- [贡献指南](CONTRIBUTING-zh.md) - 贡献指南
 
 ## 开发
 
@@ -273,7 +316,9 @@ Rust-MCP-Server/
 │   │   ├── handler.rs       # MCP 协议处理器
 │   │   ├── state.rs         # 共享服务器状态
 │   │   └── tools/           # 工具实现
-│   ├── utils/               # 工具函数（文件、图像、系统指标）
+│   ├── utils/               # 工具函数（文件、图像、系统指标、办公文档转换）
+│   │   ├── office_converter.rs  # 办公文档转换（docx-rs、lopdf、calamine、LibreOffice）
+│   │   ├── office_utils.rs      # 办公文档工具函数
 │   └── web/                 # WebUI 和 HTTP API
 ├── scripts/                 # 构建脚本
 ├── docs/                    # 文档
@@ -309,7 +354,7 @@ cargo doc --no-deps --open
 
 ## 更新日志
 
-查看 [CHANGELOG.md](CHANGELOG.md) 了解版本历史和变更。
+查看 [CHANGELOG-zh.md](CHANGELOG-zh.md) 了解版本历史和变更。
 
 ## 贡献
 

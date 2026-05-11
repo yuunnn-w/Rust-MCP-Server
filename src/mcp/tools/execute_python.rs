@@ -3,8 +3,10 @@ use rmcp::model::CallToolResult;
 use rmcp::schemars::JsonSchema;
 use serde::Deserialize;
 use serde_json::Value;
-use std::sync::mpsc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{mpsc, Arc};
 use std::time::{Duration, Instant};
+use tracing::warn;
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct ExecutePythonParams {
@@ -14,6 +16,10 @@ pub struct ExecutePythonParams {
     /// Execution timeout in milliseconds (default: 5000, max: 30000)
     #[schemars(description = "Execution timeout in milliseconds (default: 5000, max: 30000)")]
     pub timeout_ms: Option<u64>,
+    /// Reserved for future package management. Not currently used. This parameter is accepted but has no effect.
+    #[schemars(description = "Reserved for future package management. Not currently used. This parameter is accepted but has no effect.")]
+    #[allow(dead_code)]
+    pub packages: Option<Vec<String>>,
 }
 
 pub async fn execute_python(
@@ -31,51 +37,74 @@ pub async fn execute_python(
     let working_dir_str = working_dir.to_string_lossy().to_string();
 
     let (tx, rx) = mpsc::channel();
+    let cancelled = Arc::new(AtomicBool::new(false));
+    let cancelled_thread = cancelled.clone();
+    let (sig_tx, sig_rx) = rustpython_vm::signal::user_signal_channel();
     let start = Instant::now();
-    std::thread::Builder::new()
+    let handle = std::thread::Builder::new()
         .stack_size(8 * 1024 * 1024)
         .spawn(move || {
-            let result = run_python_code(&code, &working_dir_str, allow_fs_access, start, timeout);
+            let result = run_python_code(&code, &working_dir_str, allow_fs_access, start, timeout, cancelled_thread, sig_rx);
             let _ = tx.send(result);
         })
         .map_err(|e| format!("Failed to spawn Python execution thread: {}", e))?;
 
     let wait_start = Instant::now();
-    let result = match rx.recv_timeout(timeout) {
-        Ok(r) => r,
-        Err(mpsc::RecvTimeoutError::Timeout) => {
-            // Give the trace mechanism a brief grace period to terminate the thread
-            let _ = rx.recv_timeout(Duration::from_millis(500));
+    let spawn_res = tokio::time::timeout(timeout, tokio::task::spawn_blocking(move || {
+        rx.recv().unwrap_or_else(|_| Err("Python execution thread panicked".to_string()))
+    })).await;
+
+    let result = match spawn_res {
+        Ok(Ok(Ok(r))) => {
+            let _ = handle.join();
+            r
+        }
+        Ok(Ok(Err(e))) => {
+            let _ = handle.join();
+            return Ok(CallToolResult::error(vec![rmcp::model::Content::text(
+                format!("Python execution error: {}", e)
+            )]));
+        }
+        Ok(Err(_)) => {
+            let _ = handle.join();
+            return Ok(CallToolResult::error(vec![rmcp::model::Content::text(
+                "Python execution thread panicked".to_string(),
+            )]));
+        }
+        Err(_) => {
+            cancelled.store(true, Ordering::Relaxed);
+            let _ = sig_tx.send(Box::new(|vm| {
+                Err(vm.new_exception_empty(vm.ctx.exceptions.keyboard_interrupt.to_owned()))
+            }));
+            let grace_result = tokio::time::timeout(
+                Duration::from_millis(1500),
+                tokio::task::spawn_blocking(move || {
+                    let _ = handle.join();
+                }),
+            ).await;
+            if grace_result.is_err() {
+                warn!("Python thread did not terminate within 1500ms after interrupt signal; detaching thread to avoid blocking");
+            }
             return Ok(CallToolResult::error(vec![rmcp::model::Content::text(format!(
                 "Python execution timed out after {}ms. Consider simplifying the code or increasing timeout_ms.",
                 params.timeout_ms.unwrap_or(5000)
             ))]));
         }
-        Err(mpsc::RecvTimeoutError::Disconnected) => {
-            return Ok(CallToolResult::error(vec![rmcp::model::Content::text(
-                "Python execution thread panicked".to_string(),
-            )]));
-        }
     };
 
     let elapsed_ms = wait_start.elapsed().as_millis() as u64;
 
-    match result {
-        Ok((result_value, stdout, stderr)) => {
-            let json = serde_json::json!({
-                "result": result_value,
-                "stdout": stdout,
-                "stderr": stderr,
-                "execution_time_ms": elapsed_ms,
-            });
-            Ok(CallToolResult::success(vec![rmcp::model::Content::text(
-                json.to_string(),
-            )]))
-        }
-        Err(e) => Ok(CallToolResult::error(vec![rmcp::model::Content::text(
-            format!("Python execution error: {}", e),
-        )])),
-    }
+    let (result_value, stdout, stderr) = result;
+
+    let json = serde_json::json!({
+        "result": result_value,
+        "stdout": stdout,
+        "stderr": stderr,
+        "execution_time_ms": elapsed_ms,
+    });
+    Ok(CallToolResult::success(vec![rmcp::model::Content::text(
+        json.to_string(),
+    )]))
 }
 
 fn run_python_code(
@@ -84,6 +113,8 @@ fn run_python_code(
     allow_fs_access: bool,
     start: Instant,
     timeout: Duration,
+    cancelled: Arc<AtomicBool>,
+    sig_rx: rustpython_vm::signal::UserSignalReceiver,
 ) -> Result<(Value, String, String), String> {
     use rustpython_vm as vm;
     use rustpython_vm::convert::ToPyObject;
@@ -91,16 +122,20 @@ fn run_python_code(
     let interpreter = vm::Interpreter::builder(Default::default())
         .add_native_modules(&rustpython_stdlib::stdlib_module_defs(vm::Context::genesis()))
         .add_frozen_modules(rustpython_pylib::FROZEN_STDLIB)
+        .init_hook(move |vm| {
+            vm.set_user_signal_channel(sig_rx);
+        })
         .build();
 
     interpreter.enter(|vm| {
         let scope = vm.new_scope_with_builtins();
 
         // Inject timeout checker for trace-based termination
+        let cancelled_check = cancelled.clone();
         let check_timeout = vm.new_function(
             "_rust_check_timeout",
             move |_vm: &rustpython_vm::VirtualMachine| -> bool {
-                start.elapsed() > timeout
+                start.elapsed() > timeout || cancelled_check.load(Ordering::Relaxed)
             },
         );
         scope
@@ -131,7 +166,7 @@ def _safe_open(path, *args, **kwargs):
     abs_path = os.path.abspath(path)
     if not abs_path.startswith(_wd):
         raise OSError("Access denied: path outside working directory")
-    return _real_open(path, *args, **kwargs)
+    return _real_open(abs_path, *args, **kwargs)
 builtins.open = _safe_open
 
 # Restrict os filesystem functions to working directory
@@ -502,6 +537,7 @@ mod tests {
         Parameters(ExecutePythonParams {
             code: code.to_string(),
             timeout_ms,
+            packages: None,
         })
     }
 
@@ -625,7 +661,7 @@ mod tests {
             .clone();
         let parsed: serde_json::Value = serde_json::from_str(&text).unwrap();
         let val = parsed["result"].as_i64().unwrap();
-        assert!(val >= 1 && val <= 100);
+        assert!((1..=100).contains(&val));
     }
 
     #[tokio::test]

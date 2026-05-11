@@ -1,0 +1,7 @@
+# Windows 7 target configuration
+# YY-Thunks v1.2.1 provides runtime stubs for Win8+ APIs via build.rs injection.
+[target.x86_64-win7-windows-msvc]
+# No extra linker flags needed — YY-Thunks handles API compatibility at build time.
+
+[target.i686-win7-windows-msvc]
+# No extra linker flags needed.

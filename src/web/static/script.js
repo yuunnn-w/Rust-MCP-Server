@@ -2,6 +2,14 @@
 // Cyberpunk AI Command Center — Frontend Controller
 // ============================================================
 
+function debounce(fn, delay) {
+    let timer = null;
+    return function(...args) {
+        clearTimeout(timer);
+        timer = setTimeout(() => fn.apply(this, args), delay);
+    };
+}
+
 class CommandCenter {
     constructor() {
         this.lang = 'zh';
@@ -15,11 +23,17 @@ class CommandCenter {
         this.terminalLogs = [];
         this.terminalCollapsed = false;
         this.config = null;
+        this.currentConcurrency = 0;
         this.metricsInterval = null;
         this.theme = 'system'; // 'dark' | 'light' | 'system'
         this.pythonFsAccessEnabled = false;
         this.presets = [];
         this.currentPreset = null;
+        this.canvasAccentColor = '0, 240, 255';
+        this._canvasResizeHandler = null;
+        this._mediaQueryList = null;
+        this._mediaQueryListener = null;
+        this._cardTiltState = new WeakMap();
 
         this.i18n = {
             zh: {
@@ -84,7 +98,7 @@ class CommandCenter {
                 version: '版本',
                 author: '作者',
                 license: '许可证',
-                description: '高性能模型上下文协议（MCP）服务器，带 WebUI 控制面板。',
+                aboutDescription: '高性能模型上下文协议（MCP）服务器，带 WebUI 控制面板。',
                 presetSection: '工具预设',
                 batchSection: '批量操作',
                 batchEnableAll: '全部启用',
@@ -93,12 +107,18 @@ class CommandCenter {
                 presetNone: '无',
                 presetNameMinimal: '最小模式',
                 presetNameCoding: '编码开发',
-                presetNameDocument: '文档处理',
+                presetNameResearch: '研究文档',
                 presetNameDataAnalysis: '数据分析',
                 presetNameSystemAdmin: '系统管理',
                 presetNameFullPower: '全功能',
                 presetToolsCount: '{count} 个工具',
                 github: 'GitHub',
+                loading: '加载中...',
+                loadError: '加载失败',
+                retry: '重试',
+                filterAll: '全部',
+                filterSafe: '安全',
+                filterDangerous: '危险',
             },
             en: {
                 title: 'AI Command Center',
@@ -162,7 +182,7 @@ class CommandCenter {
                 version: 'Version',
                 author: 'Author',
                 license: 'License',
-                description: 'A high-performance Model Context Protocol (MCP) server with WebUI control panel.',
+                aboutDescription: 'A high-performance Model Context Protocol (MCP) server with WebUI control panel.',
                 presetSection: 'Tool Presets',
                 batchSection: 'Batch Actions',
                 batchEnableAll: 'Enable All',
@@ -171,69 +191,67 @@ class CommandCenter {
                 presetNone: 'None',
                 presetNameMinimal: 'Minimal',
                 presetNameCoding: 'Coding',
-                presetNameDocument: 'Document',
+                presetNameResearch: 'Research',
                 presetNameDataAnalysis: 'Data Analysis',
                 presetNameSystemAdmin: 'System Admin',
                 presetNameFullPower: 'Full Power',
                 presetToolsCount: '{count} tools',
                 github: 'GitHub',
+                loading: 'Loading...',
+                loadError: 'Load failed',
+                retry: 'Retry',
+                filterAll: 'All',
+                filterSafe: 'Safe',
+                filterDangerous: 'Dangerous',
             }
         };
 
         this.toolI18n = {
             zh: {
-                dir_list: { desc: '列出目录内容，支持过滤和精简模式（最大深度5）。对文本文件自动返回字符数和行数', usage: '用法：列出目录内容。\n参数：path（路径），可选 max_depth（默认2，最大5），可选 include_hidden，可选 pattern（glob 如 "*.rs"），可选 brief（默认true），可选 sort_by（name/type/size/modified），可选 flatten（默认false，扁平列表）\n返回：对每个文件，若为 UTF-8 文本则包含 char_count 和 line_count\n示例：{"path": "/home/user", "pattern": "*.rs", "brief": true}' },
-                file_read: { desc: '并发读取一个或多个文本文件，每个文件可独立设置行号、范围等参数', usage: '用法：并发读取多个文本文件。\n参数：files（文件列表），每个文件项包含 path, 可选 start_line（默认0），可选 end_line（默认500），可选 offset_chars，可选 max_chars（默认15000），可选 line_numbers（默认true），可选 highlight_line（1-based）\n返回：每个文件一个结果对象，包含 success, content, lines_displayed, total_lines, truncated\n示例：{"files": [{"path": "a.txt", "start_line": 0, "end_line": 100}, {"path": "b.txt", "start_line": 0, "end_line": 50}]}' },
-                file_search: { desc: '搜索关键词并返回匹配片段及上下文（最大深度5）', usage: '用法：在文件或目录中搜索关键词。\n参数：path（路径），keyword（关键词），可选 file_pattern（glob），可选 use_regex（默认false），可选 max_results（默认20），可选 context_lines（默认3），可选 brief（默认false），可选 output_format（detailed/compact/location，默认detailed）\n示例：{"path": "/home/user/src", "keyword": "TODO", "context_lines": 3}' },
-                file_edit: { desc: '并发编辑一个或多个文件，支持字符串替换、行号替换、插入、删除或补丁模式。string_replace/line_replace/insert 可自动创建新文件（危险操作）', usage: '用法：并发编辑多个文件。\n参数：operations（操作列表），每个操作包含 path, mode, 以及对应模式的参数。\nstring_replace: path, old_string, new_string, 可选 occurrence（1=默认第一处，0=全部）。若文件不存在且有 new_string，则创建新文件。\nline_replace: path, start_line, end_line, new_string。若文件不存在且有 new_string，则创建新文件。\ninsert: path, start_line, new_string。若文件不存在且有 new_string，则创建新文件。\ndelete: path, start_line, end_line\npatch: path, patch（unified diff 字符串）\n示例：{"operations": [{"path": "main.rs", "mode": "string_replace", "old_string": "fn old()", "new_string": "fn new()"}, {"path": "new.rs", "mode": "insert", "new_string": "fn main() {}"}]}' },
-                file_write: { desc: '并发将内容写入一个或多个文件（危险操作）', usage: '用法：并发写入多个文件。\n参数：files（文件列表），每个文件项包含 path, content, 可选 mode（new/append/overwrite，默认new）\n返回：每个文件一个结果对象，包含 success, message, bytes_written\n示例：{"files": [{"path": "test.txt", "content": "Hello", "mode": "new"}, {"path": "log.txt", "content": "Line", "mode": "append"}]}' },
-                file_ops: { desc: '并发复制、移动、删除或重命名一个或多个文件（危险操作）', usage: '用法：并发执行多个文件操作。\n参数：operations（操作列表），每个操作包含 action（copy/move/delete/rename），source，可选 target，可选 overwrite（默认false）\n返回：每个操作一个结果对象，包含 success, message\n示例：{"operations": [{"action": "copy", "source": "a.txt", "target": "b.txt"}, {"action": "delete", "source": "file.txt"}]}' },
-                file_stat: { desc: '并发获取一个或多个文件或目录的元数据。对文本文件额外返回字符数、行数和编码', usage: '用法：并发获取多个文件/目录的元数据。\n参数：paths（路径列表）\n返回：每个路径一个结果对象，包含 name, size, file_type, readable, writable, modified/created/accessed。对 UTF-8 文本文件额外包含 is_text, char_count, line_count, encoding\n示例：{"paths": ["src/main.rs", "Cargo.toml"]}' },
-                path_exists: { desc: '检查路径是否存在并返回其类型', usage: '用法：检查路径存在性。\n参数：path（路径）\n返回：exists (bool), path_type (file/dir/symlink/none)\n示例：{"path": "src/main.rs"}' },
-                json_query: { desc: '使用 JSON Pointer 语法查询 JSON 文件', usage: '用法：查询 JSON 文件。\n参数：path（JSON 文件路径），query（JSON Pointer 如 "/data/0/name"），可选 max_chars（默认15000）\n示例：{"path": "config.json", "query": "/database/host"}' },
-                git_ops: { desc: '在仓库中运行 git 命令（status, diff, log, branch, show）', usage: '用法：运行 git 命令。\n参数：action（status/diff/log/branch/show），可选 repo_path（默认工作目录），可选 options（额外参数数组）\n示例：{"action": "status"} | {"action": "log", "options": ["--oneline", "-n", "10"]}' },
-                calculator: { desc: '计算数学表达式', usage: '用法：计算数学表达式。\n参数：expression（表达式）\n支持：+, -, *, /, ^, sqrt, sin, cos, tan, log, ln, abs, pi, e\n示例：{"expression": "2 + 3 * 4"}' },
-                http_request: { desc: '发起 HTTP 请求，支持 JSON 提取和响应限制', usage: '用法：发起 HTTP 请求。\n参数：url（地址），method（GET/POST），可选 headers，可选 body，可选 extract_json_path（如 "/data/0/name"），可选 include_response_headers（默认false），可选 max_response_chars（默认15000）\n示例：{"url": "https://api.example.com", "method": "GET"}' },
-                datetime: { desc: '获取当前日期和时间', usage: '用法：获取当前日期时间。\n无需参数。\n示例：{}' },
-                image_read: { desc: '读取图像文件并返回 base64 数据或仅元数据', usage: '用法：读取图像文件。\n参数：path（路径），可选 mode（full/metadata，默认 full）\n示例：{"path": "image.png", "mode": "metadata"}' },
-                execute_command: { desc: '执行 shell 命令（默认禁用，危险操作）', usage: '用法：执行 shell 命令。\n参数：command（命令），可选 cwd（工作目录），可选 timeout，可选 shell（Windows: cmd/powershell/pwsh; Unix: sh/bash/zsh），可选 shell_path（自定义 shell 路径，如 C:\\Tools\\pwh.exe），可选 shell_arg（自定义参数，如 -Command, /C）\n示例：{"command": "ls -la", "cwd": "/home/user"} | {"command": "Get-Date", "shell_path": "C:\\Tools\\pwh.exe"}' },
-                process_list: { desc: '列出系统进程', usage: '用法：列出系统进程。\n无需参数。\n示例：{}' },
-                base64_codec: { desc: '对字符串进行 Base64 编码或解码', usage: '用法：Base64 编解码。\n参数：operation（encode/decode），input（输入）\n示例：{"operation": "encode", "input": "Hello, World!"}' },
-                hash_compute: { desc: '计算字符串或文件的哈希值（MD5/SHA1/SHA256）', usage: '用法：计算哈希。\n参数：input（输入），algorithm（MD5/SHA1/SHA256）\n文件需前缀 "file:"\n示例：{"input": "hello", "algorithm": "SHA256"}' },
-                system_info: { desc: '获取系统信息', usage: '用法：获取系统信息。\n无需参数。\n示例：{}' },
-                env_get: { desc: '获取环境变量的值', usage: '用法：获取环境变量。\n参数：name（变量名）\n示例：{"name": "PATH"}' },
-                execute_python: { desc: '执行 Python 代码。所有 Python 标准库模块均可使用。', usage: '用法：执行 Python 代码。\n参数：code（Python 代码），可选 timeout_ms（默认5000，最大30000）\n将返回值赋给变量 __result。若未设置，最后一行将自动作为表达式求值。\n所有 Python 标准库模块均可使用。\n通过 WebUI 上的"文件系统"开关可启用本地文件系统访问。\n示例：{"code": "import math\n__result = math.pi * 2"}' },
-                clipboard: { desc: '读写系统剪贴板内容，支持文本和图片', usage: '用法：读写系统剪贴板。\n参数：operation（read_text/write_text/read_image/clear），可选 text（write_text 时需要）\n示例：{"operation": "read_text"} | {"operation": "write_text", "text": "Hello"} | {"operation": "clear"}' },
-                archive: { desc: '创建、解压、列出或追加 ZIP 归档文件', usage: '用法：ZIP 归档操作。\n参数：operation（create/extract/list/append），archive_path，可选 source_paths（create/append），可选 destination（extract），可选 compression_level 1-9（默认6）\n示例：{"operation": "create", "archive_path": "backup.zip", "source_paths": ["src", "Cargo.toml"]} | {"operation": "extract", "archive_path": "backup.zip", "destination": "./extracted"}' },
-                diff: { desc: '比较文本、文件或目录的差异，支持多种输出格式', usage: '用法：比较差异。\n参数：operation（compare_text/compare_files/directory_diff/git_diff_file），可选 old_text/new_text（compare_text），可选 old_path/new_path（compare_files/directory_diff），可选 file_path（git_diff_file），可选 output_format（unified/side_by_side/summary/inline，默认unified），可选 context_lines（默认3），可选 ignore_whitespace（默认false），可选 ignore_case（默认false），可选 max_output_lines（默认500），可选 word_level（默认true）\n示例：{"operation": "compare_text", "old_text": "foo\nbar", "new_text": "foo\nbaz", "output_format": "unified"} | {"operation": "git_diff_file", "file_path": "src/main.rs"}' },
-                note_storage: { desc: 'AI 短期记忆便签本，30分钟无操作自动清空', usage: '用法：AI 短期记忆便签本。\n参数：operation（create/list/read/update/delete/search/append），可选 id（read/update/delete/append），可选 title/content/tags/category（create/update），可选 tag_filter/category（list），可选 query（search），可选 append_content（append）\n便签仅保存在内存中，30分钟无操作后自动清空。最多100条，每条最多50000字符。\n示例：{"operation": "create", "title": "用户偏好暗黑模式", "content": "...", "tags": ["偏好"], "category": "用户偏好"} | {"operation": "search", "query": "偏好"}' },
+                Glob: { desc: '列出目录内容，支持增强过滤（最大深度10）。对UTF-8文本文件自动返回字符数和行数', usage: '用法：列出目录内容。\n参数：path（路径），可选 max_depth（默认2，最大10），可选 pattern（glob 如 "*.rs"），可选 brief（默认true），可选 sort_by（name/type/size/modified），可选 flatten\n示例：{"path": "/home/user", "pattern": "*.rs", "brief": true}' },
+                Read: { desc: '读取文件并自动检测格式。模式：auto/text/media。DOC/DOCX：doc_text（markdown）、doc_with_images（markdown+内嵌图片）、doc_images（仅图片）。PPT/PPTX：ppt_text、ppt_images（幻灯片转图片）。PDF：pdf_text、pdf_images（页面转图片）。XLS/XLSX：text。支持批量读取。图片模式返回 base64 编码的图片内容供视觉模型读取', usage: '用法：读取文件。\n参数：path（路径），可选mode（auto/text/media/doc_text/doc_with_images/doc_images/ppt_text/ppt_images/pdf_text/pdf_images），可选 start_line/end_line/offset_chars/max_chars/line_numbers/highlight_line/sheet_name/image_dpi/image_format\n示例：{"path": "file.txt", "start_line": 0, "end_line": 100} | {"path": "doc.docx", "mode": "doc_text"}' },
+                Grep: { desc: '在文件中搜索模式，支持增强过滤（最大深度10）。支持正则、大小写敏感、全词匹配、多行模式。输出模式：detailed/compact/location/brief。可搜索办公文档内容', usage: '用法：搜索关键词/模式。\n参数：path（路径），pattern（模式），可选 file_pattern（glob），可选 use_regex（默认false），可选 output_mode（detailed/compact/location/brief），可选 max_results（默认20），可选 context_lines（默认3）\n示例：{"path": "/home/user/src", "pattern": "TODO", "context_lines": 3}' },
+                Edit: { desc: '并发编辑文件。文本模式：string_replace、line_replace、insert、delete、patch。Office模式：office_insert、office_replace、office_delete、office_insert_image、office_format、office_insert_table（通过markdown操作DOCX复杂格式）。PDF模式：pdf_delete_page、pdf_insert_image、pdf_insert_text、pdf_replace_text。可创建新文件（危险操作）', usage: '用法：并发编辑多个文件。\n参数：operations（操作列表），每个操作包含 path, mode 及对应模式的参数\ntext模式：string_replace(path, old_string, new_string, occurrence)/line_replace(path, start_line, end_line, new_string)/insert(path, start_line, new_string)/delete(path, start_line, end_line)/patch(path, patch)\noffice模式：office_insert(path, markdown)/office_replace(path, find_text, new_string)/office_delete(path, find_text, element_type)/office_insert_image(path, image_path, find_text)/office_format(path, find_text, format_type)/office_insert_table(path, markdown[, find_text, location])\npdf模式：pdf_delete_page(path, page_index)/pdf_insert_image(path, image_path, page_index)/pdf_insert_text(path, new_string, page_index)/pdf_replace_text(path, old_string, new_string)\n示例：{"operations": [{"path": "main.rs", "mode": "string_replace", "old_string": "fn old()", "new_string": "fn new()"}]}' },
+                Write: { desc: '并发将内容写入文件。支持创建办公文档：DOCX（docx_paragraphs或office_markdown）、XLSX（xlsx_sheets或office_csv）、PPTX（pptx_slides）、PDF（office_markdown通过LibreOffice）、IPYNB（ipynb_cells）（危险操作）', usage: '用法：并发写入多个文件。\n参数：files（文件列表），可选 file_type/docx_paragraphs/xlsx_sheets/pptx_slides/ipynb_cells/office_markdown/office_csv\n文本模式：{"files": [{"path": "test.txt", "content": "Hello", "mode": "new"}]}\nDOCX创建：{"file_type": "docx", "office_markdown": "# Title", "files": [{"path": "doc.docx"}]}\nCSV创建XLSX：{"file_type": "xlsx", "office_csv": "Name,Age\nAlice,30", "files": [{"path": "data.xlsx"}]}\nPDF创建：{"file_type": "pdf", "office_markdown": "# Title", "files": [{"path": "output.pdf"}]}' },
+                FileStat: { desc: '并发获取一个或多个文件或目录的元数据。对UTF-8文本文件额外返回字符数、行数和编码', usage: '用法：并发获取多个文件/目录的元数据。\n参数：paths（路径列表）\n返回：每个路径包含 name, size, file_type, readable, writable, modified/created/accessed。UTF-8文本文件额外包含 is_text, char_count, line_count, encoding\n示例：{"paths": ["src/main.rs", "Cargo.toml"]}' },
+                Clipboard: { desc: '读写系统剪贴板内容，支持文本和图片', usage: '用法：读写系统剪贴板。\n参数：operation（read_text/write_text/read_image/clear），可选 text（write_text时需要）\n示例：{"operation": "read_text"} | {"operation": "write_text", "text": "Hello"} | {"operation": "clear"}' },
+                Diff: { desc: '比较文本、文件或目录的差异，支持多种输出格式', usage: '用法：比较差异。\n参数：operation（compare_text/compare_files/directory_diff/git_diff_file），可选 old_text/new_text，可选 output_format（unified/side_by_side/summary/inline，默认unified），可选 context_lines（默认3）\n示例：{"operation": "compare_text", "old_text": "foo", "new_text": "bar", "output_format": "unified"}' },
+                WebFetch: { desc: '获取URL内容，提取模式：text（去除HTML）/html（原始）/markdown', usage: '用法：获取网页内容。\n参数：url（地址），可选 extract_mode（text/html/markdown，默认text）\n示例：{"url": "https://example.com", "extract_mode": "markdown"}' },
+                Archive: { desc: '创建、解压、列出或追加ZIP压缩文件。支持 AES-256 密码加密（危险操作）', usage: '用法：ZIP归档操作。\n参数：operation（create/extract/list/append），source，可选 destination, password\n示例：{"operation": "create", "source": "src/", "destination": "archive.zip", "password": "mypass"}' },
+                NoteStorage: { desc: 'AI助手的短期记忆便签板，支持CRUD、搜索和JSON导出', usage: '用法：管理便签。\n参数：operation（create/list/read/update/delete/append/search/export/import），及对应内容\n示例：{"operation": "create", "content": "记住这个信息..."}' },
+                Task: { desc: '任务管理，支持增删改查操作', usage: '用法：管理任务。\n参数：operation（create/list/get/update/delete），及对应内容\n示例：{"operation": "create", "title": "完成报告", "priority": "high"}' },
+                WebSearch: { desc: '通过DuckDuckGo搜索网页，支持地区和语言过滤', usage: '用法：搜索网页。\n参数：query（搜索内容），可选 region（地区代码），可选 language（语言代码）\n示例：{"query": "Rust MCP server"}' },
+                AskUser: { desc: '通过MCP引导向用户提问，支持超时和默认选项', usage: '用法：向用户提问。\n参数：question（问题），可选 timeout_ms，可选 options\n示例：{"question": "确认删除？", "options": ["yes", "no"]}' },
+                Bash: { desc: '执行Shell命令，支持可选的工作目录、标准输入、输出限制和异步模式。异步命令需配合Monitor工具使用（危险操作）', usage: '用法：执行Shell命令。\n参数：command（命令），可选 working_dir/cwd，可选 stdin（标准输入），可选 max_output_chars（默认50000），可选 timeout（默认30秒，最大300），可选 async_mode（默认false），可选 shell_path/shell_arg\n示例：{"command": "ls -la", "working_dir": "/home/user"}' },
+                SystemInfo: { desc: '获取系统信息，包括进程列表。使用sections参数选择获取的类别：system/cpu/memory/disks/network/temperature/processes（默认全部启用）', usage: '用法：获取系统信息。\n参数：可选 sections（类别列表），可选 process_limit（默认50），可选 process_sort（cpu/memory/name，默认cpu）\n示例：{"sections": ["cpu", "memory", "processes"]}' },
+                ExecutePython: { desc: '在RustPython沙箱中执行Python代码，用于计算、数据处理和逻辑判断。全部Python标准库可用', usage: '用法：执行Python代码。\n参数：code（代码），可选 timeout_ms（默认5000，最大30000），可选 packages（暂无效）\n通过 __result 变量返回结果\n示例：{"code": "x = 42\n__result = x * 2"}' },
+                Git: { desc: '执行Git命令（status/diff/log/branch/show），支持路径过滤和日志数量限制', usage: '用法：执行Git命令。\n参数：command（status/diff/log/branch/show），可选 repo_path（仓库路径），可选 path（文件路径过滤），可选 max_count（log条数限制）\n示例：{"command": "status", "repo_path": "/home/user/repo"}' },
+                Monitor: { desc: '监控Bash工具启动的异步长时间运行命令。支持流式输出、等待完成或发送信号', usage: '用法：监控异步命令。\n参数：command_id（Bash异步模式返回的ID），可选 operation（stream/wait/signal，默认wait），可选 timeout（默认60秒），可选 signal（terminate/kill/interrupt）\n示例：{"command_id": "abc123", "operation": "stream"}' },
+                NotebookEdit: { desc: '读取、写入和编辑Jupyter .ipynb笔记本文件。支持add_cell/edit_cell/delete_cell操作（危险操作）', usage: '用法：编辑Jupyter笔记本。\n参数：path（.ipynb文件路径），operation（add_cell/edit_cell/delete_cell），可选 cell_index/cell_id，可选 source/cell_type\n示例：{"operation": "add_cell", "path": "notebook.ipynb", "cell_type": "code", "source": "print(1)"}' },
+                FileOps: { desc: '并发复制、移动、删除或重命名文件。支持dry_run预览和conflict_resolution（skip/overwrite/rename）。限制在工作目录内操作（危险操作）', usage: '用法：批量操作文件。\n参数：operations（操作列表），每个包含 path, operation（copy/move/delete/rename），可选 destination/new_path，可选 overwrite\n示例：{"operations": [{"path": "old.txt", "operation": "rename", "new_path": "new.txt"}]}' },
             },
             en: {
-                dir_list: { desc: 'List directory contents with filtering and brief mode (max depth 5). Returns char_count and line_count for UTF-8 text files', usage: 'Usage: List directory contents.\nParameters: path, optional max_depth (default: 2, max: 5), optional include_hidden, optional pattern (glob e.g. "*.rs"), optional brief (default: true), optional sort_by (name/type/size/modified), optional flatten (default: false)\nReturns: For each file, if it is UTF-8 text, includes char_count and line_count\nExample: {"path": "/home/user", "pattern": "*.rs", "brief": true}' },
-                file_read: { desc: 'Read one or more text files concurrently, each with independent line/range settings', usage: 'Usage: Read multiple text files concurrently.\nParameters: files (list of file items), each with path, optional start_line (default: 0), optional end_line (default: 500), optional offset_chars, optional max_chars (default: 15000), optional line_numbers (default: true), optional highlight_line (1-based)\nReturns: One result object per file with success, content, lines_displayed, total_lines, truncated\nExample: {"files": [{"path": "a.txt", "start_line": 0, "end_line": 100}, {"path": "b.txt", "start_line": 0, "end_line": 50}]}' },
-                file_search: { desc: 'Search for keyword and return matching content fragments with context (max depth 5)', usage: 'Usage: Search for keyword.\nParameters: path, keyword, optional file_pattern (glob), optional use_regex (default: false), optional max_results (default: 20), optional context_lines (default: 3), optional brief (default: false), optional output_format (detailed/compact/location, default: detailed)\nExample: {"path": "/home/user/src", "keyword": "TODO", "context_lines": 3}' },
-                file_edit: { desc: 'Edit one or more files concurrently using string_replace, line_replace, insert, delete, or patch mode. string_replace/line_replace/insert can create new files (dangerous operation)', usage: 'Usage: Edit multiple files concurrently.\nParameters: operations (list of operations), each with path, mode, and mode-specific args.\nstring_replace: path, old_string, new_string, optional occurrence (1=first default, 0=all). Creates new file if not exists and new_string is provided.\nline_replace: path, start_line, end_line, new_string. Creates new file if not exists and new_string is provided.\ninsert: path, start_line, new_string. Creates new file if not exists and new_string is provided.\ndelete: path, start_line, end_line\npatch: path, patch (unified diff string)\nExample: {"operations": [{"path": "main.rs", "mode": "string_replace", "old_string": "fn old()", "new_string": "fn new()"}, {"path": "new.rs", "mode": "insert", "new_string": "fn main() {}"}]}' },
-                file_write: { desc: 'Write content to one or more files concurrently (dangerous operation)', usage: 'Usage: Write to multiple files concurrently.\nParameters: files (list of file items), each with path, content, optional mode (new/append/overwrite, default: new)\nReturns: One result object per file with success, message, bytes_written\nExample: {"files": [{"path": "test.txt", "content": "Hello", "mode": "new"}, {"path": "log.txt", "content": "Line", "mode": "append"}]}' },
-                file_ops: { desc: 'Copy, move, delete, or rename one or more files concurrently (dangerous operation)', usage: 'Usage: Perform multiple file operations concurrently.\nParameters: operations (list of operations), each with action (copy/move/delete/rename), source, optional target, optional overwrite (default: false)\nReturns: One result object per operation with success, message\nExample: {"operations": [{"action": "copy", "source": "a.txt", "target": "b.txt"}, {"action": "delete", "source": "file.txt"}]}' },
-                file_stat: { desc: 'Get metadata for one or more files or directories concurrently. Returns char_count, line_count, and encoding for UTF-8 text files', usage: 'Usage: Get metadata for multiple files/directories concurrently.\nParameters: paths (list of paths)\nReturns: One result object per path with name, size, file_type, readable, writable, modified/created/accessed. For UTF-8 text files, also includes is_text, char_count, line_count, encoding\nExample: {"paths": ["src/main.rs", "Cargo.toml"]}' },
-                path_exists: { desc: 'Check if a path exists and get its type', usage: 'Usage: Check path existence.\nParameters: path\nReturns: exists (bool), path_type (file/dir/symlink/none)\nExample: {"path": "src/main.rs"}' },
-                json_query: { desc: 'Query a JSON file using JSON Pointer syntax', usage: 'Usage: Query JSON file.\nParameters: path (JSON file), query (JSON Pointer like "/data/0/name"), optional max_chars (default: 15000)\nExample: {"path": "config.json", "query": "/database/host"}' },
-                git_ops: { desc: 'Run git commands (status, diff, log, branch, show) in a repository', usage: 'Usage: Run git commands.\nParameters: action (status/diff/log/branch/show), optional repo_path (default: working_dir), optional options (array of extra args)\nExample: {"action": "status"} | {"action": "log", "options": ["--oneline", "-n", "10"]}' },
-                calculator: { desc: 'Calculate mathematical expressions', usage: 'Usage: Calculate expressions.\nParameter: expression\nSupports: +, -, *, /, ^, sqrt, sin, cos, tan, log, ln, abs, pi, e\nExample: {"expression": "2 + 3 * 4"}' },
-                http_request: { desc: 'Make HTTP requests with optional JSON extraction and response limiting', usage: 'Usage: Make HTTP requests.\nParameters: url, method (GET/POST), optional headers, optional body, optional extract_json_path (e.g. "/data/0/name"), optional include_response_headers (default: false), optional max_response_chars (default: 15000)\nExample: {"url": "https://api.example.com", "method": "GET"}' },
-                datetime: { desc: 'Get current date and time', usage: 'Usage: Get current date and time.\nNo parameters required.\nExample: {}' },
-                image_read: { desc: 'Read an image file and return base64 data or metadata only', usage: 'Usage: Read image file.\nParameters: path, optional mode (full/metadata, default: full)\nExample: {"path": "image.png", "mode": "metadata"}' },
-                execute_command: { desc: 'Execute a shell command (disabled by default, dangerous)', usage: 'Usage: Execute shell command.\nParameters: command, optional cwd, optional timeout, optional shell (Windows: cmd/powershell/pwsh; Unix: sh/bash/zsh), optional shell_path (custom shell path, e.g., C:\\Tools\\pwh.exe), optional shell_arg (custom argument, e.g., -Command, /C)\nExample: {"command": "ls -la", "cwd": "/home/user"} | {"command": "Get-Date", "shell_path": "C:\\Tools\\pwh.exe"}' },
-                process_list: { desc: 'List system processes', usage: 'Usage: List system processes.\nNo parameters required.\nExample: {}' },
-                base64_codec: { desc: 'Encode or decode base64 strings', usage: 'Usage: Base64 encode/decode.\nParameters: operation (encode/decode), input\nExample: {"operation": "encode", "input": "Hello, World!"}' },
-                hash_compute: { desc: 'Compute hash of string or file (MD5, SHA1, SHA256)', usage: 'Usage: Compute hash.\nParameters: input, algorithm (MD5/SHA1/SHA256)\nFor files, prefix path with "file:"\nExample: {"input": "hello", "algorithm": "SHA256"}' },
-                system_info: { desc: 'Get system information', usage: 'Usage: Get system information.\nNo parameters required.\nExample: {}' },
-                env_get: { desc: 'Get the value of an environment variable', usage: 'Usage: Get environment variable.\nParameters: name\nExample: {"name": "PATH"}' },
-                execute_python: { desc: 'Execute Python code. All Python standard library modules are available.', usage: 'Usage: Execute Python code.\nParameters: code (Python code), optional timeout_ms (default: 5000, max: 30000)\nAssign the return value to __result. If not set, the last line is automatically evaluated as an expression.\nAll Python standard library modules are available.\nEnable local filesystem access via the WebUI "Filesystem" toggle.\nExample: {"code": "import math\n__result = math.pi * 2"}' },
-                clipboard: { desc: 'Read or write system clipboard content, supports text and images', usage: 'Usage: Read or write system clipboard.\nParameters: operation (read_text/write_text/read_image/clear), optional text (required for write_text)\nExample: {"operation": "read_text"} | {"operation": "write_text", "text": "Hello"} | {"operation": "clear"}' },
-                archive: { desc: 'Create, extract, list, or append ZIP archive files', usage: 'Usage: ZIP archive operations.\nParameters: operation (create/extract/list/append), archive_path, optional source_paths (create/append), optional destination (extract), optional compression_level 1-9 (default: 6)\nExample: {"operation": "create", "archive_path": "backup.zip", "source_paths": ["src", "Cargo.toml"]} | {"operation": "extract", "archive_path": "backup.zip", "destination": "./extracted"}' },
-                diff: { desc: 'Compare text, files, or directories with multiple output formats', usage: 'Usage: Compare differences.\nParameters: operation (compare_text/compare_files/directory_diff/git_diff_file), optional old_text/new_text (compare_text), optional old_path/new_path (compare_files/directory_diff), optional file_path (git_diff_file), optional output_format (unified/side_by_side/summary/inline, default: unified), optional context_lines (default: 3), optional ignore_whitespace (default: false), optional ignore_case (default: false), optional max_output_lines (default: 500), optional word_level (default: true)\nExample: {"operation": "compare_text", "old_text": "foo\nbar", "new_text": "foo\nbaz", "output_format": "unified"} | {"operation": "git_diff_file", "file_path": "src/main.rs"}' },
-                note_storage: { desc: 'AI short-term memory scratchpad, auto-clears after 30min inactivity', usage: 'Usage: AI short-term memory scratchpad.\nParameters: operation (create/list/read/update/delete/search/append), optional id (read/update/delete/append), optional title/content/tags/category (create/update), optional tag_filter/category (list), optional query (search), optional append_content (append)\nNotes are stored only in memory and auto-cleared after 30 minutes of inactivity. Max 100 notes, 50000 chars per note.\nExample: {"operation": "create", "title": "User prefers dark mode", "content": "...", "tags": ["preference"], "category": "user_prefs"} | {"operation": "search", "query": "preference"}' },
+                Glob: { desc: 'List directory contents with enhanced filtering (max depth 10). Returns char_count and line_count for UTF-8 text files', usage: 'Usage: List directory contents.\nParameters: path, optional max_depth (default: 2, max: 10), optional pattern (glob e.g. "*.rs"), optional brief (default: true), optional sort_by (name/type/size/modified), optional flatten\nExample: {"path": "/home/user", "pattern": "*.rs", "brief": true}' },
+                Read: { desc: 'Read file with format auto-detection. Modes: auto, text, media. DOC/DOCX: doc_text (markdown), doc_with_images (markdown+inline images), doc_images (images only). PPT/PPTX: ppt_text, ppt_images (slides as images). PDF: pdf_text, pdf_images (pages as images). XLS/XLSX: text. Batch mode via paths. Image modes return base64-encoded image content for vision models', usage: 'Usage: Read file.\nParameters: path, optional mode (auto/text/media/doc_text/doc_with_images/doc_images/ppt_text/ppt_images/pdf_text/pdf_images), optional start_line/end_line/offset_chars/max_chars/line_numbers/highlight_line/sheet_name/image_dpi/image_format\nExample: {"path": "file.txt", "start_line": 0, "end_line": 100} | {"path": "doc.docx", "mode": "doc_text"}' },
+                Grep: { desc: 'Search pattern in files with enhanced filtering (max depth 10). Searches office documents. Supports regex, case-sensitive, whole-word, multiline modes. Output modes: detailed/compact/location/brief', usage: 'Usage: Search for keyword/pattern.\nParameters: path, pattern, optional file_pattern (glob), optional use_regex (default: false), optional output_mode (detailed/compact/location/brief), optional max_results (default: 20), optional context_lines (default: 3)\nExample: {"path": "/home/user/src", "pattern": "TODO", "context_lines": 3}' },
+                Edit: { desc: 'Edit files concurrently. Text modes: string_replace, line_replace, insert, delete, patch. Office modes: office_insert, office_replace, office_delete, office_insert_image, office_format, office_insert_table (manipulate DOCX via markdown). PDF modes: pdf_delete_page, pdf_insert_image, pdf_insert_text, pdf_replace_text. Can create new files (dangerous)', usage: 'Usage: Edit multiple files.\nParameters: operations (list), each with path, mode, and mode-specific params.\ntext: string_replace(path, old_string, new_string, occurrence)/line_replace(path, start_line, end_line, new_string)/insert(path, start_line, new_string)/delete(path, start_line, end_line)/patch(path, patch)\noffice: office_insert(path, markdown)/office_replace(path, find_text, new_string)/office_delete(path, find_text, element_type)/office_insert_image(path, image_path, find_text)/office_format(path, find_text, format_type)/office_insert_table(path, markdown[, find_text, location])\npdf: pdf_delete_page(path, page_index)/pdf_insert_image(path, image_path, page_index)/pdf_insert_text(path, new_string, page_index)/pdf_replace_text(path, old_string, new_string)\nExample: {"operations": [{"path": "main.rs", "mode": "string_replace", "old_string": "fn old()", "new_string": "fn new()"}]}' },
+                Write: { desc: 'Write content to files concurrently. Supports office documents: DOCX (docx_paragraphs or office_markdown), XLSX (xlsx_sheets or office_csv), PPTX (pptx_slides), PDF (office_markdown via LibreOffice), IPYNB (ipynb_cells) (dangerous)', usage: 'Usage: Write to multiple files.\nParameters: files (list), optional file_type/docx_paragraphs/xlsx_sheets/pptx_slides/ipynb_cells/office_markdown/office_csv\nText: {"files": [{"path": "test.txt", "content": "Hello", "mode": "new"}]}\nDOCX: {"file_type": "docx", "office_markdown": "# Title", "files": [{"path": "doc.docx"}]}\nCSV to XLSX: {"file_type": "xlsx", "office_csv": "Name,Age\nAlice,30", "files": [{"path": "data.xlsx"}]}\nPDF: {"file_type": "pdf", "office_markdown": "# PDF Title", "files": [{"path": "output.pdf"}]}' },
+                FileStat: { desc: 'Get metadata for one or more files or directories concurrently. Returns char_count, line_count, and encoding for UTF-8 text files', usage: 'Usage: Get metadata for multiple files/directories.\nParameters: paths (list of paths)\nReturns: name, size, file_type, readable, writable, modified/created/accessed. For UTF-8 text files also is_text, char_count, line_count, encoding\nExample: {"paths": ["src/main.rs", "Cargo.toml"]}' },
+                Clipboard: { desc: 'Read or write system clipboard content, supports text and images', usage: 'Usage: Read or write clipboard.\nParameters: operation (read_text/write_text/read_image/clear), optional text (for write_text)\nExample: {"operation": "read_text"} | {"operation": "write_text", "text": "Hello"} | {"operation": "clear"}' },
+                Diff: { desc: 'Compare text, files, or directories with multiple output formats', usage: 'Usage: Compare differences.\nParameters: operation (compare_text/compare_files/directory_diff/git_diff_file), optional old_text/new_text, optional output_format (unified/side_by_side/summary/inline, default: unified), optional context_lines (default: 3)\nExample: {"operation": "compare_text", "old_text": "foo", "new_text": "bar", "output_format": "unified"}' },
+                WebFetch: { desc: 'Fetch content from a URL with extract_mode: text (strips HTML), html (raw), or markdown', usage: 'Usage: Fetch web content.\nParameters: url, optional extract_mode (text/html/markdown, default: text)\nExample: {"url": "https://example.com", "extract_mode": "markdown"}' },
+                Archive: { desc: 'Create, extract, list, or append ZIP archives with AES-256 password encryption (dangerous)', usage: 'Usage: ZIP archive operations.\nParameters: operation (create/extract/list/append), source, optional destination, password\nExample: {"operation": "create", "source": "src/", "destination": "archive.zip", "password": "mypass"}' },
+                NoteStorage: { desc: 'AI assistant short-term memory scratchpad with CRUD, search, export/import JSON', usage: 'Usage: Manage notes.\nParameters: operation (create/list/read/update/delete/append/search/export/import), and content\nExample: {"operation": "create", "content": "Remember this info..."}' },
+                Task: { desc: 'Task management with CRUD operations', usage: 'Usage: Manage tasks.\nParameters: operation (create/list/get/update/delete), and content\nExample: {"operation": "create", "title": "Complete report", "priority": "high"}' },
+                WebSearch: { desc: 'Search the web via DuckDuckGo with optional region/language filters', usage: 'Usage: Search the web.\nParameters: query, optional region (code), optional language (code)\nExample: {"query": "Rust MCP server"}' },
+                AskUser: { desc: 'Ask the user a question via MCP elicitation with timeout and default options', usage: 'Usage: Ask user a question.\nParameters: question, optional timeout_ms, optional options\nExample: {"question": "Confirm deletion?", "options": ["yes", "no"]}' },
+                Bash: { desc: 'Execute shell command with optional working_dir, stdin, max_output_chars, and async_mode. Use Monitor tool for async commands (dangerous)', usage: 'Usage: Execute shell command.\nParameters: command, optional working_dir/cwd, optional stdin, optional max_output_chars (default: 50000), optional timeout (default: 30s, max: 300), optional async_mode (default: false), optional shell_path/shell_arg\nExample: {"command": "ls -la", "working_dir": "/home/user"}' },
+                SystemInfo: { desc: 'Get system information including processes. Use sections parameter: system/cpu/memory/disks/network/temperature/processes (all enabled by default)', usage: 'Usage: Get system info.\nParameters: optional sections (list of categories), optional process_limit (default: 50), optional process_sort (cpu/memory/name, default: cpu)\nExample: {"sections": ["cpu", "memory", "processes"]}' },
+                ExecutePython: { desc: 'Execute Python code in a RustPython sandbox for calculations, data processing, and logic evaluation. All Python standard library modules available', usage: 'Usage: Execute Python code.\nParameters: code, optional timeout_ms (default: 5000, max: 30000), optional packages (unused)\nUse __result variable for return value\nExample: {"code": "x = 42\n__result = x * 2"}' },
+                Git: { desc: 'Run git commands (status/diff/log/branch/show) with path filtering and max_count for log', usage: 'Usage: Run git commands.\nParameters: command (status/diff/log/branch/show), optional repo_path, optional path (file filter), optional max_count (log entries)\nExample: {"command": "status", "repo_path": "/home/user/repo"}' },
+                Monitor: { desc: 'Monitor long-running Bash commands started with async=true. Stream output, wait for completion, or send signals', usage: 'Usage: Monitor async commands.\nParameters: command_id (from Bash async mode), optional operation (stream/wait/signal, default: wait), optional timeout (default: 60s), optional signal (terminate/kill/interrupt)\nExample: {"command_id": "abc123", "operation": "stream"}' },
+                NotebookEdit: { desc: 'Read, write, and edit Jupyter .ipynb notebook files. Supports add_cell/edit_cell/delete_cell (dangerous)', usage: 'Usage: Edit Jupyter notebook.\nParameters: path (.ipynb file), operation (add_cell/edit_cell/delete_cell), optional cell_index/cell_id, optional source/cell_type\nExample: {"operation": "add_cell", "path": "notebook.ipynb", "cell_type": "code", "source": "print(1)"}' },
+                FileOps: { desc: 'Copy, move, delete, or rename files concurrently. Supports dry_run and conflict_resolution (skip/overwrite/rename). Restricted to working directory (dangerous)', usage: 'Usage: Batch file operations.\nParameters: operations (list), each with path, operation (copy/move/delete/rename), optional destination/new_path, optional overwrite\nExample: {"operations": [{"path": "old.txt", "operation": "rename", "new_path": "new.txt"}]}' },
             }
         };
 
@@ -251,7 +269,13 @@ class CommandCenter {
         this.initSSE();
         this.initMetricsPolling();
         this.addTerminalLog('info', 'Command Center initialized. Waiting for telemetry...');
+        // Mobile: collapse terminal by default to save screen space
+        if (window.innerWidth <= 768) {
+            this.terminalCollapsed = true;
+            document.getElementById('terminal-panel')?.classList.add('collapsed');
+        }
         this.render();
+        this.initCleanup();
     }
 
     // ============================================================
@@ -263,7 +287,9 @@ class CommandCenter {
         this.applyTheme();
 
         if (this.theme === 'system') {
-            window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => this.applyTheme());
+            this._mediaQueryList = window.matchMedia('(prefers-color-scheme: dark)');
+            this._mediaQueryListener = () => this.applyTheme();
+            this._mediaQueryList.addEventListener('change', this._mediaQueryListener);
         }
     }
 
@@ -279,12 +305,20 @@ class CommandCenter {
         document.documentElement.setAttribute('data-theme', effective);
         const btn = document.getElementById('theme-toggle');
         if (btn) btn.textContent = this.getThemeIcon();
+        const sidebarBtn = document.getElementById('sidebar-theme-toggle');
+        if (sidebarBtn) sidebarBtn.textContent = this.getThemeIcon();
+        this.updateCanvasAccentColor();
     }
 
     getThemeIcon() {
         if (this.theme === 'dark') return '☀️';
         if (this.theme === 'light') return '🌙';
         return '💻';
+    }
+
+    updateCanvasAccentColor() {
+        const style = getComputedStyle(document.documentElement);
+        this.canvasAccentColor = style.getPropertyValue('--canvas-accent').trim() || '0, 240, 255';
     }
 
     cycleTheme() {
@@ -305,12 +339,12 @@ class CommandCenter {
         let particles = [];
         let gridOffset = 0;
 
-        const resize = () => {
+        this._canvasResizeHandler = () => {
             canvas.width = window.innerWidth;
             canvas.height = window.innerHeight;
         };
-        resize();
-        window.addEventListener('resize', resize);
+        this._canvasResizeHandler();
+        window.addEventListener('resize', this._canvasResizeHandler);
 
         for (let i = 0; i < 60; i++) {
             particles.push({
@@ -323,15 +357,9 @@ class CommandCenter {
             });
         }
 
-        const getAccentColor = () => {
-            const style = getComputedStyle(document.documentElement);
-            const rgb = style.getPropertyValue('--canvas-accent').trim() || '0, 240, 255';
-            return rgb;
-        };
-
         const draw = () => {
             if (!this.bgAnimationPaused) {
-                const accent = getAccentColor();
+                const accent = this.canvasAccentColor;
                 ctx.clearRect(0, 0, canvas.width, canvas.height);
 
                 // Perspective grid
@@ -437,6 +465,28 @@ class CommandCenter {
         }
     }
 
+    initCleanup() {
+        window.addEventListener('beforeunload', () => {
+            if (this.sseSource) {
+                this.sseSource.close();
+                this.sseSource = null;
+            }
+            if (this.metricsInterval) {
+                clearInterval(this.metricsInterval);
+                this.metricsInterval = null;
+            }
+            if (this._canvasResizeHandler) {
+                window.removeEventListener('resize', this._canvasResizeHandler);
+            }
+            if (this._mediaQueryList && this._mediaQueryListener) {
+                this._mediaQueryList.removeEventListener('change', this._mediaQueryListener);
+            }
+            if (this._keydownHandler) {
+                document.removeEventListener('keydown', this._keydownHandler);
+            }
+        });
+    }
+
     // ============================================================
     // SSE
     // ============================================================
@@ -457,9 +507,19 @@ class CommandCenter {
                 }
             };
 
+            this.sseSource.onopen = () => {
+                this._sseReconnectAttempts = 0;
+            };
+
             this.sseSource.onerror = () => {
                 this.addTerminalLog('error', this.t('errorSSE'));
-                setTimeout(connect, 5000);
+                if (this.sseSource) {
+                    this.sseSource.close();
+                    this.sseSource = null;
+                }
+                this._sseReconnectAttempts = (this._sseReconnectAttempts || 0) + 1;
+                const delay = Math.min(1000 * Math.pow(2, this._sseReconnectAttempts), 30000);
+                setTimeout(connect, delay);
             };
         };
         connect();
@@ -496,6 +556,7 @@ class CommandCenter {
             this.updateMCPStatus(data.running);
             this.addTerminalLog('info', `MCP service running=${data.running}`);
         } else if (data.type === 'ConcurrentCalls') {
+            this.currentConcurrency = data.current;
             const el = document.querySelector('.hud-number[data-metric="concurrency"]');
             if (el) el.textContent = `${data.current}/${data.max}`;
             this.addTerminalLog('info', `Concurrent calls: ${data.current}/${data.max}`);
@@ -527,6 +588,10 @@ class CommandCenter {
         line.className = 'terminal-line';
         line.innerHTML = `<span class="terminal-timestamp">${time}</span><span class="terminal-level ${level}">${level.toUpperCase()}</span><span class="terminal-msg">${this.escapeHtml(message)}</span>`;
         container.appendChild(line);
+
+        while (container.children.length > 200) {
+            container.removeChild(container.firstChild);
+        }
         container.scrollTop = container.scrollHeight;
     }
 
@@ -540,39 +605,56 @@ class CommandCenter {
     // DATA LOADING
     // ============================================================
     async loadData() {
+        this.showLoading(true);
+        this.showRetry(false);
         try {
-            const [toolsRes, configRes, fsRes, presetsRes, currentPresetRes] = await Promise.all([
+            const results = await Promise.allSettled([
                 fetch('/api/tools'),
                 fetch('/api/config'),
                 fetch('/api/python-fs-access'),
                 fetch('/api/tool-presets'),
                 fetch('/api/tool-presets/current')
             ]);
-            if (toolsRes.ok) {
+
+            const [toolsRes, configRes, fsRes, presetsRes, currentPresetRes] = results.map(r => {
+                if (r.status === 'fulfilled') return r.value;
+                return null;
+            });
+
+            if (toolsRes && toolsRes.ok) {
                 const toolsData = await toolsRes.json();
                 this.tools = Array.isArray(toolsData) ? toolsData : (toolsData.tools || []);
                 this.tools.forEach(t => {
                     if (!this.callHistory[t.name]) this.callHistory[t.name] = [];
                 });
+            } else {
+                this.tools = [];
             }
-            if (configRes.ok) {
+
+            if (configRes && configRes.ok) {
                 this.config = await configRes.json();
                 this.renderConfig();
             }
-            if (fsRes.ok) {
+
+            if (fsRes && fsRes.ok) {
                 const fsData = await fsRes.json();
                 this.pythonFsAccessEnabled = fsData.enabled || false;
             }
-            if (presetsRes.ok) {
+
+            if (presetsRes && presetsRes.ok) {
                 this.presets = await presetsRes.json();
             }
-            if (currentPresetRes.ok) {
+
+            if (currentPresetRes && currentPresetRes.ok) {
                 const data = await currentPresetRes.json();
                 this.currentPreset = data.preset || null;
             }
+
+            this.showLoading(false);
             this.render();
         } catch (err) {
-            this.showError(this.t('errorLoading'));
+            this.showLoading(false);
+            this.showRetry(true, this.t('errorLoading'));
         }
     }
 
@@ -585,19 +667,32 @@ class CommandCenter {
     }
 
     // ============================================================
-    // 3D CARD TILT
+    // 3D CARD TILT (Event Delegation)
     // ============================================================
-    bindCardTilt(card) {
-        let rafId = null;
-        let targetTransform = '';
-        const applyTransform = () => {
-            if (targetTransform) {
-                card.style.transform = targetTransform;
-                card.style.transition = 'transform 0.1s ease-out';
+    initCardTiltDelegation() {
+        const safeContainer = document.getElementById('safe-tools');
+        const dangerContainer = document.getElementById('dangerous-tools');
+
+        const getCard = (el) => el?.closest('.tool-card');
+
+        const handleMouseEnter = (e) => {
+            const card = getCard(e.target);
+            if (!card) return;
+            const relatedCard = getCard(e.relatedTarget);
+            if (relatedCard === card) return;
+            if (!this._cardTiltState.has(card)) {
+                this._cardTiltState.set(card, { rafId: null, targetTransform: '' });
             }
-            rafId = null;
         };
-        card.addEventListener('mousemove', (e) => {
+
+        const handleMouseMove = (e) => {
+            const card = getCard(e.target);
+            if (!card) return;
+            let state = this._cardTiltState.get(card);
+            if (!state) {
+                state = { rafId: null, targetTransform: '' };
+                this._cardTiltState.set(card, state);
+            }
             const rect = card.getBoundingClientRect();
             const x = e.clientX - rect.left;
             const y = e.clientY - rect.top;
@@ -605,19 +700,40 @@ class CommandCenter {
             const cy = rect.height / 2;
             const dx = (x - cx) / cx;
             const dy = (y - cy) / cy;
-            targetTransform = `perspective(800px) rotateY(${dx * 5}deg) rotateX(${-dy * 5}deg) translateZ(8px)`;
-            if (!rafId) {
-                rafId = requestAnimationFrame(applyTransform);
+            state.targetTransform = `perspective(800px) rotateY(${dx * 5}deg) rotateX(${-dy * 5}deg) translateZ(8px)`;
+            if (!state.rafId) {
+                state.rafId = requestAnimationFrame(() => {
+                    if (state.targetTransform) {
+                        card.style.transform = state.targetTransform;
+                        card.style.transition = 'transform 0.1s ease-out';
+                    }
+                    state.rafId = null;
+                });
             }
-        });
-        card.addEventListener('mouseleave', () => {
-            if (rafId) {
-                cancelAnimationFrame(rafId);
-                rafId = null;
+        };
+
+        const handleMouseLeave = (e) => {
+            const card = getCard(e.target);
+            if (!card) return;
+            const relatedCard = getCard(e.relatedTarget);
+            if (relatedCard === card) return;
+            const state = this._cardTiltState.get(card);
+            if (state) {
+                if (state.rafId) {
+                    cancelAnimationFrame(state.rafId);
+                    state.rafId = null;
+                }
+                state.targetTransform = '';
             }
-            targetTransform = '';
             card.style.transform = 'perspective(800px) rotateY(0) rotateX(0) translateZ(0)';
             card.style.transition = 'transform 0.3s ease-out';
+        };
+
+        [safeContainer, dangerContainer].forEach(container => {
+            if (!container) return;
+            container.addEventListener('mouseenter', handleMouseEnter, true);
+            container.addEventListener('mousemove', handleMouseMove);
+            container.addEventListener('mouseleave', handleMouseLeave, true);
         });
     }
 
@@ -653,10 +769,13 @@ class CommandCenter {
 
         // Search
         const searchInput = document.getElementById('search-input');
-        searchInput?.addEventListener('input', (e) => {
-            this.searchQuery = e.target.value.toLowerCase();
-            this.render();
-        });
+        if (searchInput) {
+            const debouncedSearch = debounce((e) => {
+                this.searchQuery = e.target.value.toLowerCase();
+                this.render();
+            }, 300);
+            searchInput.addEventListener('input', debouncedSearch);
+        }
 
         // Sort
         document.getElementById('sort-select')?.addEventListener('change', (e) => {
@@ -724,6 +843,60 @@ class CommandCenter {
         // Batch actions
         document.getElementById('batch-enable-all')?.addEventListener('click', () => this.batchEnableTools(true));
         document.getElementById('batch-disable-all')?.addEventListener('click', () => this.batchEnableTools(false));
+
+        // Filter buttons
+        document.querySelectorAll('#filter-group .filter-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                this.currentFilter = btn.dataset.filter;
+                document.querySelectorAll('#filter-group .filter-btn').forEach(b => b.classList.remove('active'));
+                btn.classList.add('active');
+                this.render();
+            });
+        });
+
+        // Retry button
+        document.getElementById('retry-btn')?.addEventListener('click', () => this.loadData());
+
+        // Modal background click & ESC
+        document.querySelectorAll('.modal').forEach(modal => {
+            modal.addEventListener('click', (e) => {
+                if (e.target === modal) {
+                    this.closeModal(modal.id);
+                }
+            });
+        });
+        this._keydownHandler = (e) => {
+            if (e.key === 'Escape') {
+                const openModal = document.querySelector('.modal.show');
+                if (openModal) {
+                    this.closeModal(openModal.id);
+                }
+                if (document.getElementById('sidebar')?.classList.contains('open')) {
+                    this.closeSidebar();
+                }
+            }
+        };
+        document.addEventListener('keydown', this._keydownHandler);
+
+        // Sidebar mobile actions
+        document.getElementById('sidebar-lang-toggle')?.addEventListener('click', () => {
+            this.lang = this.lang === 'zh' ? 'en' : 'zh';
+            const text = this.lang === 'zh' ? 'EN' : '中文';
+            document.getElementById('lang-toggle').textContent = text;
+            const sidebarLang = document.getElementById('sidebar-lang-toggle');
+            if (sidebarLang) sidebarLang.textContent = text;
+            this.render();
+            this.renderConfig();
+        });
+        document.getElementById('sidebar-theme-toggle')?.addEventListener('click', () => {
+            this.cycleTheme();
+        });
+        document.getElementById('sidebar-about-btn')?.addEventListener('click', () => {
+            this.closeSidebar();
+            this.openAboutModal();
+        });
+
+        this.initCardTiltDelegation();
     }
 
     closeSidebar() {
@@ -805,7 +978,7 @@ class CommandCenter {
                 const toolsRes = await fetch('/api/tools');
                 if (toolsRes.ok) {
                     const toolsData = await toolsRes.json();
-                    this.tools = Array.isArray(toolsData) ? toolsData : (toolsData.tools || []);
+            this.tools = toolsData.tools || [];
                 }
                 this.render();
                 this.showSuccess(`Preset "${name}" applied`);
@@ -905,8 +1078,9 @@ class CommandCenter {
         const data = history.slice(-24);
         if (data.length < 2) { ctx.clearRect(0, 0, canvas.width, canvas.height); return; }
 
-        canvas.width = canvas.offsetWidth;
-        canvas.height = canvas.offsetHeight;
+        canvas.width = canvas.offsetWidth || 300;
+        canvas.height = canvas.offsetHeight || 150;
+        if (canvas.width === 0 || canvas.height === 0) return;
         ctx.clearRect(0, 0, canvas.width, canvas.height);
 
         const max = Math.max(...data, 1);
@@ -1055,7 +1229,7 @@ class CommandCenter {
         grid.innerHTML = fields.map(([key, val]) => `
             <div class="config-item">
                 <label>${this.t(key)}</label>
-                <div class="config-value">${val !== undefined ? val : 'N/A'}</div>
+                <div class="config-value">${val !== undefined ? this.escapeHtml(String(val)) : 'N/A'}</div>
             </div>
         `).join('');
     }
@@ -1103,7 +1277,7 @@ class CommandCenter {
     async openAboutModal() {
         // Update static i18n texts
         document.getElementById('about-modal-title').textContent = this.t('about');
-        document.getElementById('about-desc').textContent = this.t('description');
+        document.getElementById('about-desc').textContent = this.t('aboutDescription');
         document.getElementById('about-author-label').textContent = this.t('author');
         document.getElementById('about-license-label').textContent = this.t('license');
         document.getElementById('about-github').querySelector('span').textContent = this.t('github');
@@ -1113,7 +1287,7 @@ class CommandCenter {
             const res = await fetch('/api/version');
             if (res.ok) {
                 const data = await res.json();
-                document.getElementById('about-version').textContent = 'v' + (data.version || '0.3.0');
+                document.getElementById('about-version').textContent = 'v' + (data.version || '0.4.0');
                 if (data.authors) {
                     document.getElementById('about-author').textContent = data.authors;
                 }
@@ -1189,9 +1363,7 @@ class CommandCenter {
             case 'calls':
                 sorted.sort((a, b) => (b.call_count || 0) - (a.call_count || 0));
                 break;
-            case 'time':
-                sorted.sort((a, b) => (b.last_call_time || 0) - (a.last_call_time || 0));
-                break;
+
         }
         return sorted;
     }
@@ -1238,7 +1410,7 @@ class CommandCenter {
         }
         const concEl = document.querySelector('.hud-number[data-metric="concurrency"]');
         if (concEl && this.config) {
-            concEl.textContent = `0/${this.config.max_concurrency}`;
+            concEl.textContent = `${this.currentConcurrency}/${this.config.max_concurrency}`;
         }
     }
 
@@ -1247,8 +1419,13 @@ class CommandCenter {
         if (!nav) return;
         const letters = ['all', ...Array.from('abcdefghijklmnopqrstuvwxyz')];
         nav.innerHTML = letters.map(l =>
-            `<button class="${this.currentAlphabet === l ? 'active' : ''}" data-letter="${l}" onclick="window.cc.setAlphabetFilter('${l}')">${l === 'all' ? (this.lang === 'zh' ? '全部' : 'All') : l.toUpperCase()}</button>`
+            `<button class="${this.currentAlphabet === l ? 'active' : ''}" data-letter="${l}">${l === 'all' ? (this.lang === 'zh' ? '全部' : 'All') : l.toUpperCase()}</button>`
         ).join('');
+        nav.querySelectorAll('button[data-letter]').forEach(btn => {
+            btn.addEventListener('click', () => {
+                this.setAlphabetFilter(btn.dataset.letter);
+            });
+        });
     }
 
     renderTools() {
@@ -1272,9 +1449,6 @@ class CommandCenter {
         dangerContainer.innerHTML = dangerTools.length
             ? dangerTools.map(t => this.renderToolCard(t)).join('')
             : `<div class="no-tools">${this.t('noTools')}</div>`;
-
-        // Re-bind tilt effects
-        document.querySelectorAll('.tool-card').forEach(card => this.bindCardTilt(card));
 
         // Re-bind toggle buttons
         document.querySelectorAll('.tool-toggle-btn').forEach(btn => {
@@ -1309,11 +1483,11 @@ class CommandCenter {
         const statusText = tool.is_calling ? this.t('calling') : this.t('idle');
         const dotClass = tool.enabled ? (tool.is_calling ? 'calling' : '') : 'disabled';
         const description = this.getToolDescription(tool.name);
-        const fsToggle = tool.name === 'execute_python' ? `
+        const fsToggle = tool.name === 'ExecutePython' ? `
             <div class="tool-fs-toggle">
                 <span class="fs-toggle-label">${this.lang === 'zh' ? '文件系统' : 'Filesystem'}</span>
                 <label class="neon-switch small">
-                    <input type="checkbox" data-tool="execute_python" data-toggle="fs-access" ${this.pythonFsAccessEnabled ? 'checked' : ''}>
+                    <input type="checkbox" data-tool="ExecutePython" data-toggle="fs-access" ${this.pythonFsAccessEnabled ? 'checked' : ''}>
                     <span class="slider"></span>
                 </label>
             </div>
@@ -1367,7 +1541,6 @@ class CommandCenter {
             sort.innerHTML = `
                 <option value="name">${this.t('sortByName')}</option>
                 <option value="calls">${this.t('sortByCalls')}</option>
-                <option value="time">${this.t('sortByTime')}</option>
             `;
             sort.value = this.currentSort;
         }
@@ -1463,6 +1636,14 @@ class CommandCenter {
         const browseBtn = document.getElementById('browse-working-dir');
         if (browseBtn) browseBtn.textContent = this.t('browse');
 
+        // Filter buttons
+        const filterAll = document.getElementById('filter-all');
+        const filterSafe = document.getElementById('filter-safe');
+        const filterDanger = document.getElementById('filter-danger');
+        if (filterAll) filterAll.textContent = this.t('filterAll');
+        if (filterSafe) filterSafe.textContent = this.t('filterSafe');
+        if (filterDanger) filterDanger.textContent = this.t('filterDangerous');
+
         this.renderPresets();
     }
 
@@ -1474,6 +1655,22 @@ class CommandCenter {
     showSuccess(msg) {
         const el = document.getElementById('success-message');
         if (el) { el.textContent = msg; el.style.display = 'block'; setTimeout(() => el.style.display = 'none', 3000); }
+    }
+
+    showLoading(show) {
+        const el = document.getElementById('loading-indicator');
+        const text = document.getElementById('loading-text');
+        if (el) el.style.display = show ? 'flex' : 'none';
+        if (text) text.textContent = this.t('loading');
+    }
+
+    showRetry(show, msg) {
+        const el = document.getElementById('retry-message');
+        const text = document.getElementById('retry-text');
+        const btn = document.getElementById('retry-btn');
+        if (el) el.style.display = show ? 'flex' : 'none';
+        if (text) text.textContent = msg || '';
+        if (btn) btn.textContent = this.t('retry');
     }
 }
 

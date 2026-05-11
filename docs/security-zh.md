@@ -1,4 +1,4 @@
-# 安全指南
+﻿# 安全指南
 
 ## 概述
 
@@ -40,11 +40,11 @@ Rust MCP Server 实现了多层安全机制，在为 AI 助手提供强大功能
 
 ### 1. 工作目录限制
 
-写操作工具（file_write、file_ops、file_edit、execute_command、execute_python、archive、diff）被限制在可配置的工作目录内，防止未授权修改敏感系统文件。只读工具（dir_list、file_read、file_search、file_stat、path_exists、json_query、git_ops、image_read、hash_compute、clipboard、note_storage）可以访问文件系统中的任意路径。
+写操作工具（Write、Edit、FileOps、Bash、ExecutePython、Archive、Diff）被限制在可配置的工作目录内，防止未授权修改敏感系统文件。只读工具（Glob、Read、Grep、FileStat、Git、Clipboard、NoteStorage）可以访问文件系统中的任意路径。
 
-**`archive` 安全说明**：归档工具会校验所有源路径、目标路径和归档路径是否在工作目录内。解压出的文件无法逃逸出工作目录。
+**`Archive` 安全说明**：归档工具会校验所有源路径、目标路径和归档路径是否在工作目录内。解压出的文件无法逃逸出工作目录。
 
-**`note_storage` 安全说明**：便签完全存储在内存中，30 分钟无操作后自动清空。不会持久化到磁盘，也无法在服务器重启后保留。此工具设计为 AI 短期推理的草稿本，而非长期存储。
+**`NoteStorage` 安全说明**：便签完全存储在内存中，30 分钟无操作后自动清空。不会持久化到磁盘，也无法在服务器重启后保留。此工具设计为 AI 短期推理的草稿本，而非长期存储。
 
 **工作原理：**
 1. 写操作的所有路径被规范化为绝对路径
@@ -73,7 +73,7 @@ fn validate_path(path: &Path, working_dir: &Path) -> bool {
 
 ### 2. 危险命令黑名单
 
-`execute_command` 工具默认阻止 20 种危险命令模式。
+`Bash` 工具默认阻止 20 种危险命令模式。
 
 **被阻止的命令：**
 
@@ -90,6 +90,7 @@ fn validate_path(path: &Path, working_dir: &Path) -> bool {
 | 9 | system | `system(`, `system (` | 两者 | 系统调用 |
 | 10 | shred | `shred -`, `shred /` | Linux | 安全删除 |
 | 11 | rd | `rd /s /q`, `rmdir /s /q` | Windows | 目录删除 |
+| 12 | format | `format` | Windows | 磁盘擦除 |
 | 13 | diskpart | `diskpart` | Windows | 磁盘操作 |
 | 14 | reg | `reg delete`, `reg add` | Windows | 注册表更改 |
 | 15 | net | `net user`, `net stop` | Windows | 网络/账户 |
@@ -162,7 +163,7 @@ cat 'file with | in name'
 请与用户确认是否执行此命令。
 
 如果用户同意，请使用相同参数再次调用 
-execute_command 工具以确认执行。
+Bash 工具以确认执行。
 ```
 
 ### 5. 审计日志
@@ -214,7 +215,7 @@ RUST_LOG=debug ./rust-mcp-server
 
 ### 9. Python 沙箱
 
-`execute_python` 工具在 RustPython 解释器中运行用户代码，并启用沙箱隔离。
+`ExecutePython` 工具在 RustPython 解释器中运行用户代码，并启用沙箱隔离。
 
 **沙箱特性：**
 - 禁用文件系统访问时，`builtins.open` 和 `_io.open` / `_io.FileIO` 被替换为阻塞存根
@@ -226,7 +227,7 @@ RUST_LOG=debug ./rust-mcp-server
 
 ### 10. HTTP SSRF 防护
 
-`http_request` 工具包含服务器端请求伪造防护。
+`WebFetch` 工具包含服务器端请求伪造防护。
 
 **防护措施：**
 - 拦截私有 IP 段：`127.0.0.0/8`、`10.0.0.0/8`、`172.16.0.0/12`、`192.168.0.0/16`、`169.254.0.0/16`、`::1`、`::`、`fc00::/7`、`fe80::/10`
@@ -239,35 +240,31 @@ RUST_LOG=debug ./rust-mcp-server
 ## 工具分类
 
 ### 安全工具
-以下工具大多属于只读或非破坏性操作，使用相对安全。`minimal` 预设默认启用其中 16 个。只读文件工具不受工作目录限制：
-- `calculator` - 数学计算
-- `dir_list` - 目录列表（不受工作目录限制）
-- `file_read` - 文件读取（不受工作目录限制）
-- `file_search` - 文件内容搜索（不受工作目录限制）
-- `datetime` - 日期/时间
-- `base64_codec` - Base64 编码/解码
-- `hash_compute` - 哈希计算（不受工作目录限制）
-- `http_request` - HTTP 请求（具备 SSRF 防护）
-- `image_read` - 图像读取（不受工作目录限制）
-- `system_info` - 全面系统信息（操作系统、CPU、内存、磁盘、网络接口、温度）
-- `file_stat` - 文件/目录元数据（不受工作目录限制）
-- `path_exists` - 路径存在性检查（不受工作目录限制）
-- `json_query` - JSON 文件查询（不受工作目录限制）
-- `env_get` - 环境变量读取（过滤敏感变量）
-- `git_ops` - Git 仓库只读操作（不受工作目录限制）
-- `process_list` - 系统进程列表
-- `execute_python` - Python 代码执行。所有 Python 标准库模块均可使用。文件系统访问可通过 WebUI 切换。
-- `clipboard` - 读写系统剪贴板内容（文本或图片）
-- `diff` - 比较文本、文件或目录差异（只读操作，文件/目录模式限制在工作目录内）
-- `note_storage` - AI 短期内存便签本（30 分钟无操作自动清空）
+以下工具大多属于只读或非破坏性操作，使用相对安全。`minimal` 预设默认启用其中 9 个。只读文件工具不受工作目录限制：
+- `Glob` - 目录列表（不受工作目录限制）
+- `Read` - 文件读取（不受工作目录限制）
+- `Grep` - 文件内容搜索（不受工作目录限制）
+- `WebFetch` - URL 内容抓取（具备 SSRF 防护）
+- `FileStat` - 文件/目录元数据及路径存在性检查（不受工作目录限制）
+- `Git` - Git 仓库只读操作（不受工作目录限制）
+- `SystemInfo` - 全面系统信息（操作系统、CPU、内存、磁盘、网络接口、温度）；在低于 Windows 10 的旧版本系统上会自动跳过磁盘、网络和温度数据
+- `ExecutePython` - Python 代码执行。所有 Python 标准库模块均可使用。文件系统访问可通过 WebUI 切换。
+- `Clipboard` - 读写系统剪贴板内容（文本或图片）
+- `Diff` - 比较文本、文件或目录差异（只读操作，文件/目录模式限制在工作目录内）
+- `NoteStorage` - AI 短期内存便签本（30 分钟无操作自动清空）
+- `Task` - 创建、列出、更新和删除任务，包含标题、描述、优先级和标签
+- `WebSearch` - 使用可配置的搜索引擎搜索网页（使用外部网络，结果可能变化）
+- `WebFetch` - 抓取并解析 URL 内容（获取外部内容，数据可能不可信）
+- `AskUser` - 向用户提问或请求确认
 
-### 危险工具（5个）
+### 危险工具（6个）
 这些工具默认禁用，需要谨慎使用：
-- `file_write` - 文件写入（可能覆盖数据，限制在工作目录内，100MB 限制）
-- `file_ops` - 复制、移动、删除或重命名文件（限制在工作目录内）
-- `file_edit` - 多模式文件编辑（可能修改文件，限制在工作目录内）
-- `execute_command` - Shell 命令执行（具备注入检测、两步确认和自定义 shell 路径支持）
-- `archive` - ZIP 归档创建/解压（限制在工作目录内）
+- `Write` - 文件写入（可能覆盖数据，限制在工作目录内，100MB 限制）
+- `FileOps` - 复制、移动、删除或重命名文件（限制在工作目录内）
+- `Edit` - 多模式文件编辑（可能修改文件，限制在工作目录内）
+- `Bash` - Shell 命令执行（具备注入检测、两步确认和自定义 shell 路径支持）
+- `Archive` - ZIP 归档创建/解压（限制在工作目录内）
+- `NotebookEdit` - 读取、写入和编辑 Jupyter .ipynb 笔记本文件（限制在工作目录内）
 
 ## 最佳实践
 
@@ -289,9 +286,9 @@ RUST_LOG=debug ./rust-mcp-server
    # 使用更严格的预设或不应用预设
    ./rust-mcp-server --preset none
    ```
-   - `minimal` 预设仅启用安全的只读工具（16 个）
-   - 仅在需要时切换到更高预设（`coding`、`system_admin`、`full_power`）
-   - 仅在受信任环境中启用 `execute_command`
+    - `minimal` 预设仅启用安全的只读工具（9 个）
+    - 仅在需要时切换到更高预设（`coding`、`data_analysis`、`system_admin`、`research`、`full_power`）
+   - 仅在受信任环境中启用 `Bash`
 
 3. **定期审查审计日志**
    ```bash
@@ -325,7 +322,7 @@ RUST_LOG=debug ./rust-mcp-server
 
 3. **检查工作目录**
    - 确认您在正确的目录中操作
-   - 使用 `pwd` 或 `dir_list` 确认位置
+   - 使用 `pwd` 或 `Glob` 确认位置
 
 4. **报告可疑活动**
    - 监控意外的工具调用

@@ -5,9 +5,11 @@ use dashmap::DashMap;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 use tokio::sync::{broadcast, RwLock, Semaphore};
 use tracing::info;
+use tracing_subscriber::{EnvFilter, Registry, reload};
 
 /// Notification that the tool list has changed, to be sent to MCP clients
 #[derive(Debug, Clone)]
@@ -22,6 +24,9 @@ pub struct ToolStatus {
     pub call_count: u64,
     /// Whether the tool is currently being called
     pub is_calling: bool,
+    /// Whether the tool is busy (calling or within 5s cooldown)
+    #[serde(skip)]
+    pub is_busy: bool,
     /// Timestamp of the last call end (for busy status check)
     #[serde(skip)]
     pub last_call_end: Arc<RwLock<Option<Instant>>>,
@@ -50,6 +55,7 @@ impl ToolStatus {
             enabled,
             call_count: 0,
             is_calling: false,
+            is_busy: false,
             last_call_end: Arc::new(RwLock::new(None)),
             recent_calls: Arc::new(RwLock::new(VecDeque::with_capacity(1000))),
             call_start_time: Arc::new(RwLock::new(None)),
@@ -94,6 +100,19 @@ impl ToolStatus {
         durations.push_back(duration_ms);
         while durations.len() > 100 {
             durations.pop_front();
+        }
+    }
+
+    /// Compute is_busy dynamically based on is_calling and last_call_end
+    pub async fn compute_is_busy(&self) -> bool {
+        if self.is_calling {
+            return true;
+        }
+        let last_end = self.last_call_end.read().await;
+        if let Some(end_time) = *last_end {
+            end_time.elapsed() < Duration::from_secs(5)
+        } else {
+            false
         }
     }
 
@@ -213,6 +232,35 @@ impl Note {
     }
 }
 
+/// A task stored in memory
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Task {
+    pub id: u64,
+    pub title: String,
+    pub description: String,
+    pub priority: String,
+    pub tags: Vec<String>,
+    pub status: String,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+impl Task {
+    pub fn new(id: u64, title: String, description: String, priority: String, tags: Vec<String>, status: String) -> Self {
+        let now = chrono::Local::now().to_rfc3339();
+        Self {
+            id,
+            title,
+            description,
+            priority,
+            tags,
+            status,
+            created_at: now.clone(),
+            updated_at: now,
+        }
+    }
+}
+
 /// Shared server state
 pub struct ServerState {
     /// Tool status map
@@ -226,17 +274,19 @@ pub struct ServerState {
     /// Tool list changed signal broadcaster (for MCP clients)
     pub tool_list_changed_tx: broadcast::Sender<ToolListChangedSignal>,
     /// Current concurrent calls
-    pub current_calls: RwLock<usize>,
+    pub current_calls: AtomicUsize,
     /// Maximum concurrent calls allowed
-    pub max_concurrency: RwLock<usize>,
+    pub max_concurrency: AtomicUsize,
+    /// Deficit of permits to drain when reducing max_concurrency under load
+    pub permit_deficit: AtomicUsize,
     /// MCP service running status
-    pub mcp_running: RwLock<bool>,
+    pub mcp_running: AtomicBool,
     /// Pending commands waiting for user confirmation (command_hash -> PendingCommand)
     pub pending_commands: RwLock<HashMap<String, PendingCommand>>,
     /// System metrics collector
     pub metrics_collector: MetricsCollector,
     /// Whether execute_python tool has filesystem access enabled
-    pub python_fs_access_enabled: RwLock<bool>,
+    pub python_fs_access_enabled: AtomicBool,
     /// Current active tool preset name
     pub current_preset: RwLock<Option<String>>,
     /// Custom system prompt appended to MCP instructions (sync RwLock for access from sync get_info)
@@ -246,7 +296,18 @@ pub struct ServerState {
     /// Last access time for notes (used for 30min auto-clear)
     pub notes_last_access: RwLock<Instant>,
     /// Next note ID auto-increment
-    pub notes_next_id: RwLock<u64>,
+    pub notes_next_id: AtomicU64,
+    /// In-memory tasks storage
+    pub tasks: DashMap<u64, Task>,
+    /// Next task ID auto-increment
+    pub tasks_next_id: AtomicU64,
+    /// Handle for dynamically reloading the tracing log filter
+    pub log_reload_handle: std::sync::RwLock<Option<reload::Handle<EnvFilter, Registry>>>,
+    /// Handle for the pending commands cleanup background task
+    pub pending_cleanup_handle: std::sync::Mutex<Option<tokio::task::JoinHandle<()>>>,
+    /// Whether LibreOffice is available on the system
+    #[allow(dead_code)]
+    pub libreoffice_available: AtomicBool,
 }
 
 impl ServerState {
@@ -257,23 +318,43 @@ impl ServerState {
         let max_concurrency = config.max_concurrency;
 
         let system_prompt = config.system_prompt.clone();
-        Arc::new(Self {
-            tool_status: DashMap::new(),
-            concurrency_limiter: Semaphore::new(max_concurrency),
-            config: RwLock::new(config),
-            status_tx,
-            tool_list_changed_tx,
-            current_calls: RwLock::new(0),
-            max_concurrency: RwLock::new(max_concurrency),
-            mcp_running: RwLock::new(false),
-            pending_commands: RwLock::new(HashMap::new()),
-            metrics_collector: MetricsCollector::new(),
-            python_fs_access_enabled: RwLock::new(false),
-            current_preset: RwLock::new(None),
-            system_prompt: std::sync::RwLock::new(system_prompt),
-            notes: DashMap::new(),
-            notes_last_access: RwLock::new(Instant::now()),
-            notes_next_id: RwLock::new(1),
+        Arc::new_cyclic(|weak: &std::sync::Weak<Self>| {
+            let weak_clone = weak.clone();
+            let handle = tokio::spawn(async move {
+                loop {
+                    tokio::time::sleep(Duration::from_secs(60)).await;
+                    if let Some(state) = weak_clone.upgrade() {
+                        state.cleanup_expired_pending_commands().await;
+                    } else {
+                        break;
+                    }
+                }
+            });
+
+            Self {
+                tool_status: DashMap::new(),
+                concurrency_limiter: Semaphore::new(max_concurrency),
+                config: RwLock::new(config),
+                status_tx,
+                tool_list_changed_tx,
+                current_calls: AtomicUsize::new(0),
+                max_concurrency: AtomicUsize::new(max_concurrency),
+                permit_deficit: AtomicUsize::new(0),
+                mcp_running: AtomicBool::new(false),
+                pending_commands: RwLock::new(HashMap::new()),
+                metrics_collector: MetricsCollector::new(),
+                python_fs_access_enabled: AtomicBool::new(false),
+                current_preset: RwLock::new(None),
+                system_prompt: std::sync::RwLock::new(system_prompt),
+                notes: DashMap::new(),
+                notes_last_access: RwLock::new(Instant::now()),
+                notes_next_id: AtomicU64::new(1),
+                tasks: DashMap::new(),
+                tasks_next_id: AtomicU64::new(1),
+                log_reload_handle: std::sync::RwLock::new(None),
+                pending_cleanup_handle: std::sync::Mutex::new(Some(handle)),
+                libreoffice_available: AtomicBool::new(crate::utils::office_converter::find_libreoffice().is_some()),
+            }
         })
     }
 
@@ -335,12 +416,8 @@ impl ServerState {
     /// Record a tool call start
     pub async fn record_call_start(&self, tool_name: &str) {
         // Update current calls count
-        let current = {
-            let mut calls = self.current_calls.write().await;
-            *calls += 1;
-            *calls
-        };
-        let max = *self.max_concurrency.read().await;
+        let current = self.current_calls.fetch_add(1, Ordering::Relaxed) + 1;
+        let max = self.max_concurrency.load(Ordering::Relaxed);
         let _ = self.status_tx.send(StatusUpdate::ConcurrentCalls {
             current,
             max,
@@ -361,20 +438,25 @@ impl ServerState {
 
     /// Record a tool call end
     pub async fn record_call_end(self: &Arc<Self>, tool_name: &str) {
-        // Update current calls count
-        {
-            let mut calls = self.current_calls.write().await;
-            *calls = calls.saturating_sub(1);
+        // Drain permit deficit if any (from concurrency reduction under load)
+        let mut deficit = self.permit_deficit.load(Ordering::Relaxed);
+        while deficit > 0 {
+            match self.concurrency_limiter.try_acquire() {
+                Ok(permit) => {
+                    permit.forget();
+                    deficit -= 1;
+                    self.permit_deficit.store(deficit, Ordering::Relaxed);
+                }
+                Err(_) => break,
+            }
         }
-        let max = *self.max_concurrency.read().await;
-        let state = Arc::clone(self);
-        tokio::spawn(async move {
-            tokio::time::sleep(std::time::Duration::from_secs(5)).await;
-            let current = *state.current_calls.read().await;
-            let _ = state.status_tx.send(StatusUpdate::ConcurrentCalls {
-                current,
-                max,
-            });
+
+        // Update current calls count
+        let current = self.current_calls.fetch_sub(1, Ordering::Relaxed).saturating_sub(1);
+        let max = self.max_concurrency.load(Ordering::Relaxed);
+        let _ = self.status_tx.send(StatusUpdate::ConcurrentCalls {
+            current,
+            max,
         });
 
         // Update tool status
@@ -384,83 +466,101 @@ impl ServerState {
             tracing::info!("Tool '{}' call ended (count: {})", tool_name, call_count);
             
             // Send immediate update - tool is still busy (within 5 second window)
+            let is_busy = status.compute_is_busy().await;
             let _ = self.status_tx.send(StatusUpdate::ToolCallCount {
                 tool: tool_name.to_string(),
                 count: call_count,
                 is_calling: false,
-                is_busy: true,
-            });
-            
-            // Spawn a task to send "not busy" update after 5 seconds
-            let status_tx = self.status_tx.clone();
-            let tool_name = tool_name.to_string();
-            tokio::spawn(async move {
-                tokio::time::sleep(std::time::Duration::from_secs(5)).await;
-                let _ = status_tx.send(StatusUpdate::ToolCallCount {
-                    tool: tool_name,
-                    count: call_count,
-                    is_calling: false,
-                    is_busy: false,
-                });
+                is_busy,
             });
         }
     }
 
-    /// Get all tool statuses
-    pub fn get_all_tool_statuses(&self) -> Vec<ToolStatus> {
-        self.tool_status
-            .iter()
-            .map(|entry| entry.value().clone())
-            .collect()
+    /// Get all tool statuses (is_busy is computed dynamically)
+    pub async fn get_all_tool_statuses(&self) -> Vec<ToolStatus> {
+        let mut result = Vec::new();
+        for entry in self.tool_status.iter() {
+            let mut status = entry.value().clone();
+            status.is_busy = status.compute_is_busy().await;
+            result.push(status);
+        }
+        result
     }
 
-    /// Get a specific tool's status
-    pub fn get_tool_status(&self, tool_name: &str) -> Option<ToolStatus> {
-        self.tool_status.get(tool_name).map(|s| s.clone())
+    /// Get a specific tool's status (is_busy is computed dynamically)
+    pub async fn get_tool_status(&self, tool_name: &str) -> Option<ToolStatus> {
+        match self.tool_status.get(tool_name) {
+            Some(s) => {
+                let mut status = s.clone();
+                status.is_busy = status.compute_is_busy().await;
+                Some(status)
+            }
+            None => None,
+        }
     }
 
     /// Get current concurrent calls count
     pub async fn get_current_calls(&self) -> usize {
-        *self.current_calls.read().await
+        self.current_calls.load(Ordering::Relaxed)
     }
 
     /// Get maximum concurrent calls
     pub async fn get_max_concurrency(&self) -> usize {
-        *self.max_concurrency.read().await
+        self.max_concurrency.load(Ordering::Relaxed)
     }
 
-    /// Update maximum concurrency
+    /// Update maximum concurrency and dynamically adjust the semaphore
     pub async fn set_max_concurrency(&self, max: usize) {
-        let mut current_max = self.max_concurrency.write().await;
-        *current_max = max;
+        let max = if max == 0 { 1 } else { max };
+        let old_val = self.max_concurrency.load(Ordering::Relaxed);
+        self.max_concurrency.store(max, Ordering::Relaxed);
+
+        if max > old_val {
+            self.concurrency_limiter.add_permits(max - old_val);
+            self.permit_deficit.store(0, Ordering::Relaxed);
+        } else if max < old_val {
+            let to_remove = old_val - max;
+            let mut removed = 0usize;
+            for _ in 0..to_remove {
+                match self.concurrency_limiter.try_acquire() {
+                    Ok(permit) => {
+                        permit.forget();
+                        removed += 1;
+                    }
+                    Err(_) => break,
+                }
+            }
+            let deficit = to_remove - removed;
+            self.permit_deficit.store(deficit, Ordering::Relaxed);
+        }
+
+        let current = self.current_calls.load(Ordering::Relaxed);
         let _ = self.status_tx.send(StatusUpdate::ConcurrentCalls {
-            current: *self.current_calls.read().await,
+            current,
             max,
         });
     }
 
     /// Check if python filesystem access is enabled
     pub async fn is_python_fs_access_enabled(&self) -> bool {
-        *self.python_fs_access_enabled.read().await
+        self.python_fs_access_enabled.load(Ordering::Relaxed)
     }
 
     /// Set python filesystem access enabled/disabled
     pub async fn set_python_fs_access_enabled(&self, enabled: bool) {
-        let mut guard = self.python_fs_access_enabled.write().await;
-        *guard = enabled;
+        self.python_fs_access_enabled.store(enabled, Ordering::Relaxed);
         tracing::info!("Python filesystem access {}", if enabled { "enabled" } else { "disabled" });
     }
 
     /// Set MCP service running status
     pub async fn set_mcp_running(&self, running: bool) {
-        let mut status = self.mcp_running.write().await;
-        *status = running;
+        self.mcp_running.store(running, Ordering::Relaxed);
         let _ = self.status_tx.send(StatusUpdate::McpServiceStatus { running });
     }
 
     /// Check if MCP service is running
     pub async fn is_mcp_running(&self) -> bool {
-        *self.mcp_running.read().await
+        self.mcp_running.load(Ordering::Relaxed)
     }
 
     /// Subscribe to status updates
@@ -504,6 +604,15 @@ impl ServerState {
         false
     }
 
+    /// Stop the pending commands cleanup background task
+    pub fn stop_pending_cleanup(&self) {
+        if let Ok(mut guard) = self.pending_cleanup_handle.lock() {
+            if let Some(handle) = guard.take() {
+                handle.abort();
+            }
+        }
+    }
+
     /// Clean up expired pending commands
     pub async fn cleanup_expired_pending_commands(&self) {
         let mut pending = self.pending_commands.write().await;
@@ -518,8 +627,8 @@ impl ServerState {
     }
 
     /// Collect current system metrics
-    pub fn collect_metrics(&self) -> SystemMetrics {
-        self.metrics_collector.collect()
+    pub async fn collect_metrics(&self) -> Result<SystemMetrics, String> {
+        self.metrics_collector.collect().await
     }
 
     // ===== Preset Management =====
@@ -589,8 +698,7 @@ impl ServerState {
             let count = self.notes.len();
             if count > 0 {
                 self.notes.clear();
-                let mut next_id = self.notes_next_id.write().await;
-                *next_id = 1;
+                self.notes_next_id.store(1, Ordering::SeqCst);
                 info!("Notes expired after {}min inactivity, cleared {} notes", Self::NOTE_TIMEOUT_MINUTES, count);
             }
         }
@@ -614,7 +722,7 @@ impl ServerState {
             return Err(format!("Title too long: max {} characters", Self::NOTE_MAX_TITLE_LEN));
         }
         let content = if content.len() > Self::NOTE_MAX_CONTENT_LEN {
-            let mut truncated = content[..Self::NOTE_MAX_CONTENT_LEN].to_string();
+            let mut truncated: String = content.chars().take(Self::NOTE_MAX_CONTENT_LEN).collect();
             truncated.push_str("...[truncated]");
             truncated
         } else {
@@ -625,12 +733,7 @@ impl ServerState {
             .take(Self::NOTE_MAX_TAGS)
             .collect();
 
-        let id = {
-            let mut next_id = self.notes_next_id.write().await;
-            let id = *next_id;
-            *next_id += 1;
-            id
-        };
+        let id = self.notes_next_id.fetch_add(1, Ordering::SeqCst);
 
         let note = Note::new(id, title, content, tags, category);
         self.notes.insert(id, note.clone());
@@ -643,16 +746,20 @@ impl ServerState {
         self.touch_notes_access().await;
 
         let mut notes: Vec<Note> = self.notes.iter()
-            .map(|e| e.value().clone())
-            .filter(|n| {
+            .filter(|e| {
+                let n = e.value();
                 if let Some(ref tag) = tag_filter {
-                    if !n.tags.contains(tag) { return false; }
+                    let tag_lower = tag.to_lowercase();
+                    if !n.tags.iter().any(|t| t.to_lowercase() == tag_lower) {
+                        return false;
+                    }
                 }
                 if let Some(ref cat) = category_filter {
                     if n.category != *cat { return false; }
                 }
                 true
             })
+            .map(|e| e.value().clone())
             .collect();
         notes.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
         notes
@@ -680,7 +787,7 @@ impl ServerState {
                 }
                 if let Some(c) = content {
                     note.content = if c.len() > Self::NOTE_MAX_CONTENT_LEN {
-                        let mut truncated = c[..Self::NOTE_MAX_CONTENT_LEN].to_string();
+                        let mut truncated: String = c.chars().take(Self::NOTE_MAX_CONTENT_LEN).collect();
                         truncated.push_str("...[truncated]");
                         truncated
                     } else {
@@ -715,15 +822,21 @@ impl ServerState {
         }
     }
 
-    /// Search notes by keyword in title or content
+    /// Search notes by keyword in title, content, tags or category
     pub async fn note_search(&self, query: &str) -> Vec<Note> {
         self.check_notes_timeout().await;
         self.touch_notes_access().await;
 
         let q = query.to_lowercase();
         let mut notes: Vec<Note> = self.notes.iter()
+            .filter(|e| {
+                let n = e.value();
+                n.title.to_lowercase().contains(&q)
+                    || n.content.to_lowercase().contains(&q)
+                    || n.category.to_lowercase().contains(&q)
+                    || n.tags.iter().any(|t| t.to_lowercase().contains(&q))
+            })
             .map(|e| e.value().clone())
-            .filter(|n| n.title.to_lowercase().contains(&q) || n.content.to_lowercase().contains(&q))
             .collect();
         notes.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
         notes
@@ -739,7 +852,7 @@ impl ServerState {
                 note.content.push('\n');
                 note.content.push_str(append_content);
                 if note.content.len() > Self::NOTE_MAX_CONTENT_LEN {
-                    let mut truncated = note.content[..Self::NOTE_MAX_CONTENT_LEN].to_string();
+                    let mut truncated: String = note.content.chars().take(Self::NOTE_MAX_CONTENT_LEN).collect();
                     truncated.push_str("...[truncated]");
                     note.content = truncated;
                 }
@@ -747,6 +860,156 @@ impl ServerState {
                 Ok(note.clone())
             }
             None => Err(format!("Note {} not found", id)),
+        }
+    }
+
+    // ===== Task Management =====
+
+    const TASK_MAX_COUNT: usize = 200;
+    const TASK_MAX_TITLE_LEN: usize = 200;
+    const TASK_MAX_DESC_LEN: usize = 5000;
+    const TASK_MAX_TAGS: usize = 5;
+    const TASK_MAX_TAG_LEN: usize = 50;
+
+    pub async fn task_create(&self, title: String, description: String, priority: String, tags: Vec<String>) -> Result<Task, String> {
+        if self.tasks.len() >= Self::TASK_MAX_COUNT {
+            return Err(format!("Maximum {} tasks reached. Delete some tasks first.", Self::TASK_MAX_COUNT));
+        }
+        let title = if title.len() > Self::TASK_MAX_TITLE_LEN {
+            title.chars().take(Self::TASK_MAX_TITLE_LEN).collect()
+        } else {
+            title
+        };
+        let description = if description.len() > Self::TASK_MAX_DESC_LEN {
+            let mut truncated: String = description.chars().take(Self::TASK_MAX_DESC_LEN).collect();
+            truncated.push_str("...[truncated]");
+            truncated
+        } else {
+            description
+        };
+        let priority = match priority.to_lowercase().as_str() {
+            "low" | "medium" | "high" => priority.to_lowercase(),
+            _ => "medium".to_string(),
+        };
+        let tags: Vec<String> = tags.into_iter()
+            .filter(|t| !t.is_empty() && t.len() <= Self::TASK_MAX_TAG_LEN)
+            .take(Self::TASK_MAX_TAGS)
+            .collect();
+        let id = self.tasks_next_id.fetch_add(1, Ordering::SeqCst);
+        let task = Task::new(id, title, description, priority, tags, "pending".to_string());
+        self.tasks.insert(id, task.clone());
+        Ok(task)
+    }
+
+    pub async fn task_list(&self, status_filter: Option<String>, priority_filter: Option<String>, tag_filter: Option<String>, sort_by: Option<String>) -> Vec<Task> {
+        let status_filter = status_filter.map(|s| s.to_lowercase());
+        let priority_filter = priority_filter.map(|p| p.to_lowercase());
+        let tag_filter = tag_filter.map(|t| t.to_lowercase());
+        let sort_by = sort_by.unwrap_or_else(|| "created".to_string()).to_lowercase();
+
+        let mut tasks: Vec<Task> = self.tasks.iter()
+            .filter(|e| {
+                let t = e.value();
+                if let Some(ref s) = status_filter {
+                    if t.status != *s { return false; }
+                }
+                if let Some(ref p) = priority_filter {
+                    if t.priority != *p { return false; }
+                }
+                if let Some(ref tg) = tag_filter {
+                    if !t.tags.iter().any(|tag| tag.to_lowercase() == *tg) { return false; }
+                }
+                true
+            })
+            .map(|e| e.value().clone())
+            .collect();
+
+        match sort_by.as_str() {
+            "priority" => tasks.sort_by(|a, b| {
+                let pa = match a.priority.as_str() { "high" => 0, "medium" => 1, _ => 2 };
+                let pb = match b.priority.as_str() { "high" => 0, "medium" => 1, _ => 2 };
+                pa.cmp(&pb)
+            }),
+            "status" => tasks.sort_by(|a, b| {
+                let sa = match a.status.as_str() { "pending" => 0, "in_progress" => 1, _ => 2 };
+                let sb = match b.status.as_str() { "pending" => 0, "in_progress" => 1, _ => 2 };
+                sa.cmp(&sb)
+            }),
+            _ => tasks.sort_by(|a, b| a.created_at.cmp(&b.created_at)),
+        }
+
+        tasks
+    }
+
+    pub async fn task_read(&self, id: u64) -> Option<Task> {
+        self.tasks.get(&id).map(|e| e.value().clone())
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub async fn task_update(&self, id: u64, status: Option<String>, title: Option<String>, description: Option<String>, new_priority: Option<String>, add_tags: Option<Vec<String>>, remove_tags: Option<Vec<String>>) -> Result<Task, String> {
+        match self.tasks.get_mut(&id) {
+            Some(mut task) => {
+                if let Some(s) = status {
+                    let s_lower = s.to_lowercase();
+                    if matches!(s_lower.as_str(), "pending" | "in_progress" | "completed") {
+                        task.status = s_lower;
+                    } else {
+                        return Err(format!("Invalid status: '{}'. Must be pending, in_progress, or completed.", s));
+                    }
+                }
+                if let Some(t) = title {
+                    task.title = if t.len() > Self::TASK_MAX_TITLE_LEN {
+                        t.chars().take(Self::TASK_MAX_TITLE_LEN).collect()
+                    } else {
+                        t
+                    };
+                }
+                if let Some(d) = description {
+                    task.description = if d.len() > Self::TASK_MAX_DESC_LEN {
+                        let mut truncated: String = d.chars().take(Self::TASK_MAX_DESC_LEN).collect();
+                        truncated.push_str("...[truncated]");
+                        truncated
+                    } else {
+                        d
+                    };
+                }
+                if let Some(p) = new_priority {
+                    let p_lower = p.to_lowercase();
+                    if matches!(p_lower.as_str(), "low" | "medium" | "high") {
+                        task.priority = p_lower;
+                    } else {
+                        return Err(format!("Invalid priority: '{}'. Must be low, medium, or high.", p));
+                    }
+                }
+                if let Some(add) = add_tags {
+                    for tag in add {
+                        let tag = tag.trim().to_string();
+                        if tag.is_empty() || tag.len() > Self::TASK_MAX_TAG_LEN {
+                            continue;
+                        }
+                        if task.tags.len() >= Self::TASK_MAX_TAGS {
+                            break;
+                        }
+                        if !task.tags.iter().any(|t| t == &tag) {
+                            task.tags.push(tag);
+                        }
+                    }
+                }
+                if let Some(remove) = remove_tags {
+                    task.tags.retain(|t| !remove.iter().any(|r| r == t));
+                }
+                task.updated_at = chrono::Local::now().to_rfc3339();
+                Ok(task.clone())
+            }
+            None => Err(format!("Task {} not found", id)),
+        }
+    }
+
+    pub async fn task_delete(&self, id: u64) -> Result<(), String> {
+        if self.tasks.remove(&id).is_some() {
+            Ok(())
+        } else {
+            Err(format!("Task {} not found", id))
         }
     }
 }
@@ -805,7 +1068,7 @@ mod tests {
         assert!(state.is_tool_enabled("tool1").await);
         assert!(state.is_tool_enabled("tool2").await);
         
-        let all_statuses = state.get_all_tool_statuses();
+        let all_statuses = state.get_all_tool_statuses().await;
         assert_eq!(all_statuses.len(), 2);
     }
 
@@ -829,7 +1092,7 @@ mod tests {
     #[test]
     fn test_status_update_serialization() {
         let update = StatusUpdate::ToolCallCount {
-            tool: "calculator".to_string(),
+            tool: "dir_list".to_string(),
             count: 5,
             is_calling: true,
             is_busy: true,
@@ -837,7 +1100,7 @@ mod tests {
         let json = serde_json::to_string(&update).unwrap();
         println!("ToolCallCount JSON: {}", json);
         assert!(json.contains("\"type\":\"ToolCallCount\""));
-        assert!(json.contains("\"tool\":\"calculator\""));
+        assert!(json.contains("\"tool\":\"dir_list\""));
         assert!(json.contains("\"count\":5"));
         assert!(json.contains("\"isCalling\":true"));
         assert!(json.contains("\"isBusy\":true"));

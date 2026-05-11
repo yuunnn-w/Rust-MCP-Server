@@ -6,30 +6,32 @@ use std::path::Path;
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct DiffParams {
-    /// Operation: compare_text, compare_files, directory_diff, git_diff_file
+    #[schemars(description = "Operation: compare_text, compare_files, directory_diff, git_diff_file")]
     pub operation: String,
-    /// For compare_text: old text content
+    #[schemars(description = "For compare_text: old text content")]
     pub old_text: Option<String>,
-    /// For compare_text: new text content
+    #[schemars(description = "For compare_text: new text content")]
     pub new_text: Option<String>,
-    /// For compare_files / directory_diff / git_diff_file: old file or directory path
+    #[schemars(description = "For compare_files / directory_diff / git_diff_file: old file or directory path")]
     pub old_path: Option<String>,
-    /// For compare_files / directory_diff: new file or directory path
+    #[schemars(description = "For compare_files / directory_diff: new file or directory path")]
     pub new_path: Option<String>,
-    /// For git_diff_file: file path (compares working copy vs HEAD)
+    #[schemars(description = "For git_diff_file: file path (compares working copy vs HEAD)")]
     pub file_path: Option<String>,
-    /// Output format: unified (default), side_by_side, summary, inline
+    #[schemars(description = "Output format: unified (default), side_by_side, summary, inline")]
     pub output_format: Option<String>,
-    /// Context lines for unified diff (default: 3, max: 20)
+    #[schemars(description = "Context lines for unified diff (default: 3, max: 20)")]
     pub context_lines: Option<usize>,
-    /// Ignore whitespace differences (default: false)
+    #[schemars(description = "Ignore whitespace differences (default: false)")]
     pub ignore_whitespace: Option<bool>,
-    /// Ignore case differences (default: false)
+    #[schemars(description = "Ignore case differences (default: false)")]
     pub ignore_case: Option<bool>,
-    /// Maximum output lines (default: 500)
+    #[schemars(description = "Maximum output lines (default: 500)")]
     pub max_output_lines: Option<usize>,
-    /// Enable word-level inline diff for inline format (default: true)
+    #[schemars(description = "Enable word-level inline diff for inline format (default: true)")]
     pub word_level: Option<bool>,
+    #[schemars(description = "Ignore blank lines in comparison (default: false)")]
+    pub ignore_blank_lines: Option<bool>,
 }
 
 #[derive(Debug, Serialize)]
@@ -38,6 +40,8 @@ struct DirectoryDiffResult {
     only_in_right: Vec<String>,
     modified: Vec<String>,
     identical: Vec<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    unreadable: Vec<String>,
 }
 
 pub async fn diff(params: Parameters<DiffParams>, working_dir: &Path) -> Result<CallToolResult, String> {
@@ -47,6 +51,7 @@ pub async fn diff(params: Parameters<DiffParams>, working_dir: &Path) -> Result<
     let context_lines = p.context_lines.unwrap_or(3).clamp(1, 20);
     let ignore_ws = p.ignore_whitespace.unwrap_or(false);
     let ignore_case = p.ignore_case.unwrap_or(false);
+    let ignore_blanks = p.ignore_blank_lines.unwrap_or(false);
     let max_lines = p.max_output_lines.unwrap_or(500);
     let word_level = p.word_level.unwrap_or(true);
 
@@ -54,7 +59,7 @@ pub async fn diff(params: Parameters<DiffParams>, working_dir: &Path) -> Result<
         "compare_text" => {
             let old = p.old_text.ok_or("Missing 'old_text' for compare_text")?;
             let new = p.new_text.ok_or("Missing 'new_text' for compare_text")?;
-            let result = diff_text(&old, &new, &format, context_lines, ignore_ws, ignore_case, max_lines, word_level)?;
+            let result = diff_text(&old, &new, &format, context_lines, ignore_ws, ignore_case, ignore_blanks, max_lines, word_level)?;
             Ok(CallToolResult::success(vec![rmcp::model::Content::text(result)]))
         }
         "compare_files" => {
@@ -68,7 +73,7 @@ pub async fn diff(params: Parameters<DiffParams>, working_dir: &Path) -> Result<
                 .map_err(|e| format!("Failed to read '{}': {}", old_p, e))?;
             let new = tokio::fs::read_to_string(&new_path).await
                 .map_err(|e| format!("Failed to read '{}': {}", new_p, e))?;
-            let result = diff_text(&old, &new, &format, context_lines, ignore_ws, ignore_case, max_lines, word_level)?;
+            let result = diff_text(&old, &new, &format, context_lines, ignore_ws, ignore_case, ignore_blanks, max_lines, word_level)?;
             Ok(CallToolResult::success(vec![rmcp::model::Content::text(result)]))
         }
         "directory_diff" => {
@@ -78,22 +83,39 @@ pub async fn diff(params: Parameters<DiffParams>, working_dir: &Path) -> Result<
                 .map_err(|e| e.to_string())?;
             let new_dir = crate::utils::file_utils::ensure_path_within_working_dir(Path::new(&new_p), working_dir)
                 .map_err(|e| e.to_string())?;
-            let result = diff_directories(&old_dir, &new_dir).await?;
-            Ok(CallToolResult::success(vec![rmcp::model::Content::text(result)]))
+            let result = tokio::task::spawn_blocking(move || diff_directories(&old_dir, &new_dir))
+                .await
+                .map_err(|e| e.to_string())?;
+            Ok(CallToolResult::success(vec![rmcp::model::Content::text(result?)]))
         }
         "git_diff_file" => {
             let file_p = p.file_path.ok_or("Missing 'file_path' for git_diff_file")?;
             let file_path = crate::utils::file_utils::ensure_path_within_working_dir(Path::new(&file_p), working_dir)
                 .map_err(|e| e.to_string())?;
-            let parent = file_path.parent().unwrap_or(working_dir);
-            let file_name = file_path.file_name()
-                .and_then(|n| n.to_str())
-                .ok_or("Invalid file path")?;
+
+            // Find git repository root from working directory (more reliable for root-level files)
+            let git_root_output = tokio::process::Command::new("git")
+                .args(["rev-parse", "--show-toplevel"])
+                .current_dir(working_dir)
+                .output()
+                .await
+                .map_err(|e| format!("Failed to run git rev-parse: {}", e))?;
+
+            if !git_root_output.status.success() {
+                return Err(format!("Not a git repository or git error for '{}': {}", file_p, String::from_utf8_lossy(&git_root_output.stderr)));
+            }
+
+            let git_root = String::from_utf8_lossy(&git_root_output.stdout).trim().to_string();
+            let git_root_path = std::path::PathBuf::from(&git_root);
+
+            let relative_path = file_path.strip_prefix(&git_root_path)
+                .map_err(|_| format!("File '{}' is outside git repository", file_p))?;
+            let relative_path_str = relative_path.to_string_lossy().replace('\\', "/");
 
             // Get HEAD version via git show
             let output = tokio::process::Command::new("git")
-                .args(["show", &format!("HEAD:{}", file_name)])
-                .current_dir(parent)
+                .args(["show", &format!("HEAD:{}", relative_path_str)])
+                .current_dir(&git_root_path)
                 .output()
                 .await
                 .map_err(|e| format!("Failed to run git show: {}", e))?;
@@ -101,19 +123,26 @@ pub async fn diff(params: Parameters<DiffParams>, working_dir: &Path) -> Result<
             let old = if output.status.success() {
                 String::from_utf8_lossy(&output.stdout).to_string()
             } else {
-                return Err(format!("Failed to get HEAD version of '{}': {}", file_p, String::from_utf8_lossy(&output.stderr)));
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                if stderr.contains("exists on disk, but not in") || stderr.contains("pathspec") {
+                    return Err(format!(
+                        "File '{}' is not tracked in git (new/untracked file). HEAD version is not available.",
+                        file_p
+                    ));
+                }
+                return Err(format!("Failed to get HEAD version of '{}': {}", file_p, stderr));
             };
 
             let new = tokio::fs::read_to_string(&file_path).await
                 .map_err(|e| format!("Failed to read '{}': {}", file_p, e))?;
-            let result = diff_text(&old, &new, &format, context_lines, ignore_ws, ignore_case, max_lines, word_level)?;
+            let result = diff_text(&old, &new, &format, context_lines, ignore_ws, ignore_case, ignore_blanks, max_lines, word_level)?;
             Ok(CallToolResult::success(vec![rmcp::model::Content::text(result)]))
         }
         _ => Err(format!("Unknown diff operation: '{}'. Supported: compare_text, compare_files, directory_diff, git_diff_file", p.operation)),
     }
 }
 
-fn normalize_text(text: &str, ignore_ws: bool, ignore_case: bool) -> String {
+fn normalize_text(text: &str, ignore_ws: bool, ignore_case: bool, ignore_blanks: bool) -> String {
     let mut result = text.to_string();
     if ignore_ws {
         // Normalize line endings and trailing whitespace
@@ -123,12 +152,16 @@ fn normalize_text(text: &str, ignore_ws: bool, ignore_case: bool) -> String {
             result.pop();
         }
     }
+    if ignore_blanks {
+        result = result.lines().filter(|l| !l.trim().is_empty()).collect::<Vec<_>>().join("\n");
+    }
     if ignore_case {
         result = result.to_lowercase();
     }
     result
 }
 
+#[allow(clippy::too_many_arguments)]
 fn diff_text(
     old: &str,
     new: &str,
@@ -136,11 +169,12 @@ fn diff_text(
     context_lines: usize,
     ignore_ws: bool,
     ignore_case: bool,
+    ignore_blanks: bool,
     max_lines: usize,
     word_level: bool,
 ) -> Result<String, String> {
-    let old_norm = normalize_text(old, ignore_ws, ignore_case);
-    let new_norm = normalize_text(new, ignore_ws, ignore_case);
+    let old_norm = normalize_text(old, ignore_ws, ignore_case, ignore_blanks);
+    let new_norm = normalize_text(new, ignore_ws, ignore_case, ignore_blanks);
 
     let diff = TextDiff::from_lines(&old_norm, &new_norm);
 
@@ -258,11 +292,12 @@ fn diff_text(
     }
 }
 
-async fn diff_directories(old_dir: &Path, new_dir: &Path) -> Result<String, String> {
+fn diff_directories(old_dir: &Path, new_dir: &Path) -> Result<String, String> {
     let mut only_in_left = Vec::new();
     let mut only_in_right = Vec::new();
     let mut modified = Vec::new();
     let mut identical = Vec::new();
+    let mut unreadable = Vec::new();
 
     fn collect_files(dir: &Path, base: &Path, files: &mut Vec<String>) -> Result<(), String> {
         for entry in std::fs::read_dir(dir).map_err(|e| e.to_string())? {
@@ -302,8 +337,20 @@ async fn diff_directories(old_dir: &Path, new_dir: &Path) -> Result<String, Stri
         }
     }
     for f in old_files.iter().filter(|f| new_set.contains(*f)) {
-        let old_content = std::fs::read(old_dir.join(f)).unwrap_or_default();
-        let new_content = std::fs::read(new_dir.join(f)).unwrap_or_default();
+        let old_content = match std::fs::read(old_dir.join(f)) {
+            Ok(c) => c,
+            Err(e) => {
+                unreadable.push(format!("{} (left): {}", f, e));
+                continue;
+            }
+        };
+        let new_content = match std::fs::read(new_dir.join(f)) {
+            Ok(c) => c,
+            Err(e) => {
+                unreadable.push(format!("{} (right): {}", f, e));
+                continue;
+            }
+        };
         if old_content == new_content {
             identical.push(f.clone());
         } else {
@@ -316,6 +363,7 @@ async fn diff_directories(old_dir: &Path, new_dir: &Path) -> Result<String, Stri
         only_in_right,
         modified,
         identical,
+        unreadable,
     };
     serde_json::to_string_pretty(&result).map_err(|e| e.to_string())
 }
@@ -341,6 +389,7 @@ mod tests {
             ignore_case: None,
             max_output_lines: None,
             word_level: None,
+            ignore_blank_lines: None,
         });
         let result = diff(params, Path::new(".")).await;
         assert!(result.is_ok());
@@ -363,6 +412,7 @@ mod tests {
             ignore_case: Some(true),
             max_output_lines: None,
             word_level: None,
+            ignore_blank_lines: None,
         });
         let result = diff(params, Path::new(".")).await;
         assert!(result.is_ok());

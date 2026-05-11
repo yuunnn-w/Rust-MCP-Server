@@ -1,6 +1,7 @@
 use crate::utils::file_utils::{
-    format_datetime, format_file_size, get_text_file_info, resolve_path, strip_unc_prefix,
+    format_datetime, format_file_size, get_file_extension, get_text_file_info, resolve_path, strip_unc_prefix,
 };
+use crate::utils::office_converter;
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::model::CallToolResult;
 use rmcp::schemars::JsonSchema;
@@ -12,6 +13,9 @@ pub struct FileStatParams {
     /// Paths to files or directories (supports multiple paths)
     #[schemars(description = "Paths to files or directories (supports multiple paths)")]
     pub paths: Vec<String>,
+    /// "full" (default) or "exist" (only check existence and type). Full mode additionally returns office document stats for DOCX/PPTX/PDF/XLSX.
+    #[schemars(description = "Mode: \"full\" (default, returns full metadata including document_stats for office files) or \"exist\" (only check existence and type)")]
+    pub mode: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -48,6 +52,15 @@ struct FileStatResult {
     line_count: Option<usize>,
     #[serde(skip_serializing_if = "Option::is_none")]
     encoding: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    document_stats: Option<office_converter::OfficeDocStats>,
+}
+
+#[derive(Debug, Serialize)]
+struct FileStatExistResult {
+    path: String,
+    exists: bool,
+    file_type: String,
 }
 
 pub async fn file_stat(
@@ -55,11 +68,20 @@ pub async fn file_stat(
     working_dir: &Path,
 ) -> Result<CallToolResult, String> {
     let params = params.0;
+    let is_exist_mode = params.mode.as_deref() == Some("exist");
+
     let mut results = Vec::new();
 
     for path_str in &params.paths {
-        let result = stat_single_path(path_str, working_dir).await;
-        results.push(result);
+        if is_exist_mode {
+            let result = stat_single_path_exist(path_str, working_dir).await;
+            let json_val = serde_json::to_value(result).map_err(|e| e.to_string())?;
+            results.push(json_val);
+        } else {
+            let result = stat_single_path(path_str, working_dir).await;
+            let json_val = serde_json::to_value(result).map_err(|e| e.to_string())?;
+            results.push(json_val);
+        }
     }
 
     let json = serde_json::to_string_pretty(&results).map_err(|e| e.to_string())?;
@@ -93,6 +115,7 @@ async fn stat_single_path(path_str: &str, working_dir: &Path) -> FileStatResult 
                 char_count: None,
                 line_count: None,
                 encoding: None,
+                document_stats: None,
             }
         }
     };
@@ -123,6 +146,7 @@ async fn stat_single_path(path_str: &str, working_dir: &Path) -> FileStatResult 
             char_count: None,
             line_count: None,
             encoding: None,
+            document_stats: None,
         };
     }
 
@@ -150,6 +174,7 @@ async fn stat_single_path(path_str: &str, working_dir: &Path) -> FileStatResult 
                 char_count: None,
                 line_count: None,
                 encoding: None,
+                document_stats: None,
             }
         }
     };
@@ -174,7 +199,7 @@ async fn stat_single_path(path_str: &str, working_dir: &Path) -> FileStatResult 
     };
 
     let size = final_metadata.as_ref().map(|m| m.len());
-    let size_human = size.map(|s| format_file_size(s));
+    let size_human = size.map(format_file_size);
 
     let permissions = final_metadata.as_ref().map(|m| m.permissions());
     #[cfg(unix)]
@@ -207,15 +232,15 @@ async fn stat_single_path(path_str: &str, working_dir: &Path) -> FileStatResult 
     let modified = final_metadata
         .as_ref()
         .and_then(|m| m.modified().ok())
-        .map(|t| format_datetime(t));
+        .map(format_datetime);
     let created = final_metadata
         .as_ref()
         .and_then(|m| m.created().ok())
-        .map(|t| format_datetime(t));
+        .map(format_datetime);
     let accessed = final_metadata
         .as_ref()
         .and_then(|m| m.accessed().ok())
-        .map(|t| format_datetime(t));
+        .map(format_datetime);
 
     // Text file info
     let (is_text, char_count, line_count, encoding) =
@@ -227,6 +252,25 @@ async fn stat_single_path(path_str: &str, working_dir: &Path) -> FileStatResult 
         } else {
             (None, None, None, None)
         };
+
+    // Office document stats (for docx, pptx, xlsx, pdf files)
+    let document_stats = if file_type.as_deref() == Some("file") {
+        if let Some(ext) = get_file_extension(&canonical_path) {
+            let ext_lower = ext.to_lowercase();
+            if matches!(ext_lower.as_str(), "docx" | "doc" | "pptx" | "ppt" | "pdf" | "xlsx" | "xls") {
+                match tokio::fs::read(&canonical_path).await {
+                    Ok(data) => Some(office_converter::get_office_document_stats(&data, &ext_lower)),
+                    Err(_) => None,
+                }
+            } else {
+                None
+            }
+        } else {
+            None
+        }
+    } else {
+        None
+    };
 
     FileStatResult {
         path: strip_unc_prefix(&canonical_path.to_string_lossy()),
@@ -249,6 +293,38 @@ async fn stat_single_path(path_str: &str, working_dir: &Path) -> FileStatResult 
         char_count,
         line_count,
         encoding,
+        document_stats,
+    }
+}
+
+async fn stat_single_path_exist(path_str: &str, working_dir: &Path) -> FileStatExistResult {
+    let path = Path::new(path_str);
+    let resolved = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        working_dir.join(path)
+    };
+
+    let metadata = tokio::fs::symlink_metadata(&resolved).await.ok();
+
+    let (exists, file_type) = if let Some(meta) = metadata {
+        if meta.is_symlink() {
+            (true, "symlink".to_string())
+        } else if meta.is_dir() {
+            (true, "dir".to_string())
+        } else if meta.is_file() {
+            (true, "file".to_string())
+        } else {
+            (true, "unknown".to_string())
+        }
+    } else {
+        (false, "none".to_string())
+    };
+
+    FileStatExistResult {
+        path: strip_unc_prefix(&resolved.to_string_lossy()),
+        exists,
+        file_type,
     }
 }
 
@@ -266,6 +342,7 @@ mod tests {
 
         let params = FileStatParams {
             paths: vec![file_path.to_string_lossy().to_string()],
+            mode: None,
         };
 
         let result = file_stat(Parameters(params), temp_dir.path()).await;
@@ -292,6 +369,7 @@ mod tests {
 
         let params = FileStatParams {
             paths: vec![dir_path.to_string_lossy().to_string()],
+            mode: None,
         };
 
         let result = file_stat(Parameters(params), temp_dir.path()).await;
@@ -310,6 +388,7 @@ mod tests {
 
         let params = FileStatParams {
             paths: vec!["nonexistent_file.txt".to_string()],
+            mode: None,
         };
 
         let result = file_stat(Parameters(params), temp_dir.path()).await;
@@ -335,6 +414,7 @@ mod tests {
                 file1.to_string_lossy().to_string(),
                 file2.to_string_lossy().to_string(),
             ],
+            mode: None,
         };
 
         let result = file_stat(Parameters(params), temp_dir.path()).await;

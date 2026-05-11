@@ -1,4 +1,4 @@
-# Security Guide
+﻿# Security Guide
 
 ## Overview
 
@@ -40,11 +40,11 @@ Rust MCP Server implements multiple layers of security to protect against malici
 
 ### 1. Working Directory Restriction
 
-Write operations (file_write, file_ops, file_edit, execute_command, execute_python, archive, diff) are restricted to a configurable working directory to prevent unauthorized modification of sensitive system files. Read-only tools (dir_list, file_read, file_search, file_stat, path_exists, json_query, git_ops, image_read, hash_compute, clipboard, note_storage) can access any path on the filesystem.
+Write operations (Write, Edit, FileOps, Bash, ExecutePython, Archive, Diff) are restricted to a configurable working directory to prevent unauthorized modification of sensitive system files. Read-only tools (Glob, Read, Grep, FileStat, Git, Clipboard, NoteStorage) can access any path on the filesystem.
 
-**Note on `archive`**: The archive tool validates all source paths, destination paths, and archive paths against the working directory. Extracted files cannot escape the working directory.
+**Note on `Archive`**: The archive tool validates all source paths, destination paths, and archive paths against the working directory. Extracted files cannot escape the working directory.
 
-**Note on `note_storage`**: Notes are stored purely in memory and automatically cleared after 30 minutes of inactivity. They are not persisted to disk and cannot survive server restarts. This is designed as a short-term scratchpad for AI reasoning, not long-term storage.
+**Note on `NoteStorage`**: Notes are stored purely in memory and automatically cleared after 30 minutes of inactivity. They are not persisted to disk and cannot survive server restarts. This is designed as a short-term scratchpad for AI reasoning, not long-term storage.
 
 **How it works:**
 1. All paths for write operations are canonicalized to absolute form
@@ -73,7 +73,7 @@ fn validate_path(path: &Path, working_dir: &Path) -> bool {
 
 ### 2. Dangerous Command Blacklist
 
-The `execute_command` tool blocks 20 dangerous command patterns by default.
+The `Bash` tool blocks 20 dangerous command patterns by default.
 
 **Blocked Commands:**
 
@@ -90,6 +90,7 @@ The `execute_command` tool blocks 20 dangerous command patterns by default.
 | 9 | system | `system(`, `system (` | Both | System calls |
 | 10 | shred | `shred -`, `shred /` | Linux | Secure delete |
 | 11 | rd | `rd /s /q`, `rmdir /s /q` | Windows | Directory deletion |
+| 12 | format | `format` | Windows | Disk erasure |
 | 13 | diskpart | `diskpart` | Windows | Disk manipulation |
 | 14 | reg | `reg delete`, `reg add` | Windows | Registry changes |
 | 15 | net | `net user`, `net stop` | Windows | Network/accounts |
@@ -161,7 +162,7 @@ Command: rm -rf /home/user/temp
 This command may cause damage to the system or data. 
 Please confirm with the user whether to execute this command.
 
-If the user agrees, please call the execute_command tool 
+If the user agrees, please call the Bash tool 
 again with the same parameters to confirm execution.
 ```
 
@@ -214,7 +215,7 @@ Prevents memory exhaustion from large outputs or files.
 
 ### 9. Python Sandbox
 
-The `execute_python` tool runs user code in a RustPython interpreter with sandboxing.
+The `ExecutePython` tool runs user code in a RustPython interpreter with sandboxing.
 
 **Sandbox features:**
 - `builtins.open` and `_io.open` / `_io.FileIO` are replaced with blocked stubs when filesystem access is disabled
@@ -226,7 +227,7 @@ The `execute_python` tool runs user code in a RustPython interpreter with sandbo
 
 ### 10. HTTP SSRF Protection
 
-The `http_request` tool includes server-side request forgery protections.
+The `WebFetch` tool includes server-side request forgery protections.
 
 **Protections:**
 - Blocks private IP ranges: `127.0.0.0/8`, `10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`, `169.254.0.0/16`, `::1`, `::`, `fc00::/7`, `fe80::/10`
@@ -239,35 +240,31 @@ The `http_request` tool includes server-side request forgery protections.
 ## Tool Classification
 
 ### Safe Tools
-These tools are generally safe (read-only or non-destructive). The `minimal` preset enables 16 of them by default. Read-only file tools are not restricted to the working directory:
-- `calculator` - Mathematical calculations
-- `dir_list` - Directory listing (no working directory restriction)
-- `file_read` - File reading (no working directory restriction)
-- `file_search` - File content search (no working directory restriction)
-- `datetime` - Date/time
-- `base64_codec` - Base64 encoding/decoding
-- `hash_compute` - Hash calculation (no working directory restriction)
-- `http_request` - HTTP requests (with SSRF protection)
-- `image_read` - Image reading (no working directory restriction)
-- `system_info` - Comprehensive system information (OS, CPU, memory, disks, network interfaces, temperature)
-- `file_stat` - File/directory metadata (no working directory restriction)
-- `path_exists` - Path existence check (no working directory restriction)
-- `json_query` - JSON file querying (no working directory restriction)
-- `env_get` - Environment variable reading (sensitive variables filtered)
-- `git_ops` - Git repository read-only operations (no working directory restriction)
-- `process_list` - System process listing
-- `execute_python` - Python code execution. All standard library modules are available. Filesystem access is toggleable via WebUI.
-- `clipboard` - Read/write system clipboard content (text or image)
-- `diff` - Compare text, files, or directories (read-only, file/dir modes restricted to working directory)
-- `note_storage` - In-memory temporary scratchpad for AI short-term memory (auto-clears after 30min)
+These tools are generally safe (read-only or non-destructive). The `minimal` preset enables 9 of them by default. Read-only file tools are not restricted to the working directory:
+- `Glob` - Directory listing (no working directory restriction)
+- `Read` - File reading (no working directory restriction)
+- `Grep` - File content search (no working directory restriction)
+- `WebFetch` - URL content fetching (with SSRF protection)
+- `FileStat` - File/directory metadata and path existence check (no working directory restriction)
+- `Git` - Git repository read-only operations (no working directory restriction)
+- `SystemInfo` - Comprehensive system information (OS, CPU, memory, disks, network interfaces, temperature); on legacy Windows versions prior to Windows 10, disk, network, and temperature data are omitted
+- `ExecutePython` - Python code execution. All standard library modules are available. Filesystem access is toggleable via WebUI.
+- `Clipboard` - Read/write system clipboard content (text or image)
+- `Diff` - Compare text, files, or directories (read-only, file/dir modes restricted to working directory)
+- `NoteStorage` - In-memory temporary scratchpad for AI short-term memory (auto-clears after 30min)
+- `Task` - Create, list, update, and delete tasks with title, description, priority, and tags
+- `WebSearch` - Search the web using configurable search engine (uses external network, results may vary)
+- `WebFetch` - Fetch and parse content from a URL (fetches external content, data may be untrusted)
+- `AskUser` - Prompt the user for input or confirmation
 
-### Dangerous Tools (5)
+### Dangerous Tools (6)
 These tools require caution and are disabled by default:
-- `file_write` - File writing (can overwrite data, restricted to working directory, 100MB limit)
-- `file_ops` - Copy, move, delete, or rename files (restricted to working directory)
-- `file_edit` - Multi-mode file editing (can modify files, restricted to working directory)
-- `execute_command` - Shell command execution (with injection detection, two-step confirmation, and custom shell path support)
-- `archive` - ZIP archive creation/extraction (restricted to working directory)
+- `Write` - File writing (can overwrite data, restricted to working directory, 100MB limit)
+- `FileOps` - Copy, move, delete, or rename files (restricted to working directory)
+- `Edit` - Multi-mode file editing (can modify files, restricted to working directory)
+- `Bash` - Shell command execution (with injection detection, two-step confirmation, and custom shell path support)
+- `Archive` - ZIP archive creation/extraction (restricted to working directory)
+- `NotebookEdit` - Read, write, and edit Jupyter .ipynb notebook files (restricted to working directory)
 
 ## Best Practices
 
@@ -289,9 +286,9 @@ These tools require caution and are disabled by default:
    # Use a more restrictive preset or none
    ./rust-mcp-server --preset none
    ```
-   - The `minimal` preset enables only safe, read-only tools (16 tools)
-   - Only switch to higher presets (`coding`, `system_admin`, `full_power`) as needed
-   - Enable `execute_command` only in trusted environments
+    - The `minimal` preset enables only safe, read-only tools (9 tools)
+    - Only switch to higher presets (`coding`, `data_analysis`, `system_admin`, `research`, `full_power`) as needed
+   - Enable `Bash` only in trusted environments
 
 3. **Review Audit Logs Regularly**
    ```bash
@@ -325,7 +322,7 @@ These tools require caution and are disabled by default:
 
 3. **Check Working Directory**
    - Verify you're operating in the correct directory
-   - Use `pwd` or `dir_list` to confirm location
+   - Use `pwd` or `Glob` to confirm location
 
 4. **Report Suspicious Activity**
    - Monitor for unexpected tool calls

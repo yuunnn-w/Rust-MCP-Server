@@ -4,18 +4,17 @@
 
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
-│                        Rust MCP Server v0.3.0                       │
+│                        Rust MCP Server v0.4.0                       │
 ├─────────────────────────────────────────────────────────────────────┤
 │  ┌─────────────────┐  ┌─────────────────┐  ┌─────────────────────┐  │
 │  │   WebUI (Axum)  │  │  MCP 服务       │  │   工具注册表        │  │
 │  │                 │  │   (rmcp)        │  │                     │  │
 │  │  ┌───────────┐  │  │                 │  │  ┌───────────────┐  │  │
-│  │  │ 静态文件   │  │  │  ┌──────────┐   │  │  │ dir_list      │  │  │
-│  │  └───────────┘  │  │  │ HTTP/SSE │   │  │  │ file_read     │  │  │
-│  │  ┌───────────┐  │  │  │ 传输层   │   │  │  │ file_write    │  │  │
-│  │  │ REST API  │  │  │  └──────────┘   │  │  │ execute_cmd   │  │  │
-│  │  │ /api/*    │  │  │                 │  │  │ calculator    │  │  │
-│  │  └───────────┘  │  │                 │  │  │ ... (25工具)  │  │  │
+│  │  │ 静态文件   │  │  │  ┌──────────┐   │  │  │ Glob         │  │  │
+│  │  └───────────┘  │  │  │ HTTP/SSE │   │  │  │ Read         │  │  │
+│  │  ┌───────────┐  │  │  │ 传输层   │   │  │  │ Write        │  │  │
+│  │  │ REST API  │  │  │  └──────────┘   │  │  │ Bash         │  │  │
+│  │  │ /api/*    │  │  │                 │  │  │ ... (21工具)  │  │  │
 │  │  ┌───────────┐  │  │                 │  │  └───────────────┘  │  │
 │  │  │ SSE       │  │  │                 │  │                     │  │
 │  │  │ /events   │  │  │                 │  │                     │  │
@@ -64,6 +63,8 @@ WebUI 提供了一个现代化的控制面板来管理 MCP 服务器。
 - `GET /api/config` - 获取配置
 - `PUT /api/config` - 更新配置
 - `POST /api/mcp/{start|stop|restart}` - MCP 服务控制
+- `GET /api/python-fs-access` - 查看 `execute_python` 文件系统访问状态
+- `POST /api/python-fs-access` - 切换 `execute_python` 文件系统访问
 
 **默认绑定地址**: `127.0.0.1:2233`
 
@@ -84,60 +85,60 @@ WebUI 提供了一个现代化的控制面板来管理 MCP 服务器。
 
 ### 工具注册表
 
-25 个内置工具，按类别组织：
+21 个内置工具，按类别组织：
 
-#### 文件操作类（8 个工具）
+#### 文件操作类（6 个工具）
 | 工具名 | 描述 | 危险操作 | 工作目录限制 |
 |--------|------|----------|-------------|
-| `dir_list` | 列出目录内容（树形结构，最大深度5）。对 UTF-8 文本文件返回字符数和行数 | 否 | 否 |
-| `file_read` | 并发读取一个或多个文本文件（支持行范围） | 否 | 否 |
-| `file_search` | 在文件或目录中搜索关键词（最大深度5） | 否 | 否 |
-| `file_write` | 并发写入一个或多个文件（创建/追加/覆盖） | 是 | 是 |
-| `file_ops` | 并发复制、移动、删除或重命名一个或多个文件 | 是 | 是 |
-| `file_edit` | 并发编辑一个或多个文件（string_replace、line_replace、insert、delete、patch），支持创建新文件 | 是 | 是 |
-| `file_stat` | 并发获取一个或多个文件/目录的元数据，对 UTF-8 文本文件返回字符数和行数 | 否 | 否 |
-| `path_exists` | 轻量级路径存在性检查 | 否 | 否 |
+| `Glob` | 列出目录内容，支持增强过滤（最大深度10）。多模式 glob/regex 匹配、排除模式、文件大小/时间过滤。对 UTF-8 文本文件返回字符数和行数。 | 否 | 否 |
+| `Read` | 读取文件，支持格式自动检测和多种模式。通用文件支持 auto/text/media 模式；DOC/DOCX 支持 doc_text/doc_with_images/doc_images 模式；PPT/PPTX 支持 ppt_text/ppt_images 模式；PDF 支持 pdf_text/pdf_images 模式。`ppt_images` 优先使用 LibreOffice（最佳质量），不可用时自动回退到纯 Rust 原生提取（嵌入式图片+文本每页展示）。建议先用 FileStat 查看文档统计信息，再选择最佳模式。图片模式返回 Base64 编码的 ImageContent。 | 否 | 否 |
+| `Grep` | 在文件中搜索模式，支持增强过滤（最大深度10）。正则、区分大小写、整词、多行模式。支持搜索办公文档文本内容。 | 否 | 否 |
+| `Write` | 并发写入文件（创建/追加/覆盖）。支持创建 DOCX（office_markdown）、XLSX（office_csv）、PDF（office_markdown）、IPYNB 文件。 | 是 | 是 |
+| `FileOps` | 并发复制、移动、删除或重命名文件。支持 dry_run 预览和 conflict_resolution。 | 是 | 是 |
+| `Edit` | 多模式编辑：string_replace、line_replace、insert、delete、patch。复杂 Office 模式（office_insert、office_replace、office_delete、office_insert_image、office_format、office_insert_table）用于 DOCX。PDF 模式（pdf_delete_page、pdf_insert_image、pdf_insert_text、pdf_replace_text）通过 lopdf 实现。支持 .doc/.docx/.ppt/.pptx/.xls/.xlsx。 | 是 | 是 |
 
-#### 查询与环境类（3 个工具）
+#### 查询与数据类（2 个工具）
 | 工具名 | 描述 | 危险操作 | 工作目录限制 |
 |--------|------|----------|-------------|
-| `json_query` | 使用 JSON Pointer 语法查询 JSON 文件 | 否 | 否 |
-| `git_ops` | 在仓库中运行 git 命令 | 否 | 否 |
-| `env_get` | 获取环境变量的值 | 否 | 否 |
+| `FileStat` | 并发获取文件/目录元数据。mode="exist" 用于轻量级存在性检查。完整模式对 UTF-8 文本文件返回字符数和行数，对办公文件（DOCX/PPTX/PDF/XLSX）额外返回 `document_stats`（页面/幻灯片/工作表数量、嵌入图片数量、文本字符数）。 | 否 | 否 |
+| `Git` | 运行 git 命令（status、diff、log、branch、show）。支持 path 过滤和 max_count。 | 否 | 否 |
 
-#### 系统工具类（4 个工具）
+#### 系统工具类（3 个工具）
 | 工具名 | 描述 | 危险操作 | 工作目录限制 |
 |--------|------|----------|-------------|
-| `process_list` | 列出系统进程 | 否 | 否 |
-| `system_info` | 获取全面的系统信息，包括操作系统、CPU、内存、交换空间、磁盘、网络接口和硬件温度 | 否 | 否 |
-| `execute_command` | 在指定目录执行 shell 命令 | 是 | 是 |
-| `execute_python` | 执行 Python 代码。所有 Python 标准库模块均可使用。文件系统访问可通过 WebUI 切换。 | 否 | 是（仅在启用文件系统访问时） |
+| `SystemInfo` | 获取系统信息，支持通过 sections 参数获取进程列表。在旧版 Windows 上自动跳过磁盘、网络和温度数据。 | 否 | 否 |
+| `Bash` | 执行 shell 命令，支持 working_dir、stdin、async_mode。使用 Monitor 监控异步命令。 | 是 | 是 |
+| `ExecutePython` | 执行 Python 代码。所有 Python 标准库模块均可使用。文件系统访问可通过 WebUI 切换。 | 否 | 是（仅在启用文件系统访问时） |
+
+#### 网络工具类（1 个工具）
+| 工具名 | 描述 | 危险操作 | 工作目录限制 |
+|--------|------|----------|-------------|
+| `WebFetch` | 抓取并解析 URL 内容，支持 extract_mode（text/html/markdown） | 否 | 否 |
 
 #### 实用工具类（4 个工具）
 | 工具名 | 描述 | 危险操作 | 工作目录限制 |
 |--------|------|----------|-------------|
-| `calculator` | 计算数学表达式 | 否 | 否 |
-| `datetime` | 获取中国格式的当前日期时间 | 否 | 否 |
-| `base64_codec` | 编码或解码 base64 字符串 | 否 | 否 |
-| `hash_compute` | 计算字符串或文件的哈希值（MD5/SHA1/SHA256） | 否 | 否 |
+| `Clipboard` | 读写系统剪贴板内容（文本或图片）。跨平台。 | 否 | 否 |
+| `Archive` | 创建、解压、列出或追加 ZIP 归档，支持 AES-256 密码加密。支持 deflate 和 zstd 压缩。 | 是 | 是 |
+| `Diff` | 比较文本、文件或目录差异，支持多种输出格式。支持 ignore_blank_lines。 | 否 | 是（文件/目录模式） |
+| `NoteStorage` | AI 短期内存便签本，支持 export/import。便签 30 分钟无操作后自动清空。 | 否 | 否 |
 
-#### 剪贴板与归档类（2 个工具）
+#### 网络与交互工具类（2 个工具）
 | 工具名 | 描述 | 危险操作 | 工作目录限制 |
 |--------|------|----------|-------------|
-| `clipboard` | 读写系统剪贴板内容（文本或图片） | 否 | 否 |
-| `archive` | 创建、解压、列出或追加 ZIP 归档 | 是 | 是 |
+| `WebSearch` | 通过 DuckDuckGo 搜索网页，支持 region/language 过滤 | 否 | 否 |
+| `AskUser` | 向用户提问或请求确认，支持 timeout 和 default_value | 否 | 否 |
 
-#### 差异比较与便签类（2 个工具）
+#### 任务管理类（1 个工具）
 | 工具名 | 描述 | 危险操作 | 工作目录限制 |
 |--------|------|----------|-------------|
-| `diff` | 比较文本、文件或目录差异，支持多种输出格式 | 否 | 是（文件/目录模式） |
-| `note_storage` | AI 短期内存便签本，纯内存存储 | 否 | 否 |
+| `Task` | 统一任务管理，通过 operation 参数支持 CRUD 操作（create/list/get/update/delete） | 否 | 否 |
 
-#### 网络与图像类（2 个工具）
+#### 办公文档与监控类（2 个工具）
 | 工具名 | 描述 | 危险操作 | 工作目录限制 |
 |--------|------|----------|-------------|
-| `http_request` | 发起 HTTP GET 或 POST 请求 | 否 | 否 |
-| `image_read` | 读取图像文件并返回标准 MCP ImageContent + TextContent 元数据 | 否 | 否 |
+| `NotebookEdit` | 读取、写入和编辑 Jupyter .ipynb 笔记本文件。写操作受工作目录沙箱限制。 | 是 | 是 |
+| `Monitor` | 监控通过 async=true 启动的长时间运行 Bash 命令。操作：stream、wait、signal。 | 否 | 否 |
 
 ### 资源 (Resources)
 
@@ -247,13 +248,13 @@ WebUI 提供了一个现代化的控制面板来管理 MCP 服务器。
 | 危险命令 | `--allow-dangerous-commands` | `MCP_ALLOW_DANGEROUS_COMMANDS` | （无） |
 
 **工具预设：**
-服务器默认以 `minimal` 预设启动（启用 16 个工具，`execute_python` 处于沙箱模式）。可用预设：
-- `minimal`：16 个工具，`execute_python` 无文件系统访问
-- `coding`：23 个工具，`execute_python` 可文件系统访问
-- `document`：16 个工具，`execute_python` 无文件系统访问
-- `data_analysis`：18 个工具，`execute_python` 可文件系统访问
-- `system_admin`：20 个工具，`execute_python` 可文件系统访问
-- `full_power`：25 个工具，`execute_python` 可文件系统访问
+服务器默认以 `minimal` 预设启动（启用 9 个工具，`ExecutePython` 处于沙箱模式）。可用预设：
+- `minimal`：9 个工具，`ExecutePython` 无文件系统访问
+- `coding`：20 个工具，`ExecutePython` 可文件系统访问
+- `data_analysis`：15 个工具，`ExecutePython` 可文件系统访问
+- `system_admin`：20 个工具，`ExecutePython` 可文件系统访问
+- `research`：10 个工具，`ExecutePython` 无文件系统访问
+- `full_power`：21 个工具，`ExecutePython` 可文件系统访问
 
 使用 `--preset <name>` 设置启动预设，或 `--preset none` 跳过自动应用。
 
@@ -267,6 +268,9 @@ WebUI 提供了一个现代化的控制面板来管理 MCP 服务器。
 - **CLI 解析**: clap
 - **并发**: tokio::sync (Semaphore, RwLock)
 - **集合**: dashmap（并发 HashMap）
+- **办公文档**: docx-rs v0.4（DOCX 读写）、lopdf v0.39（PDF 编辑/文本提取）、calamine（XLS/XLSX 读取）
+- **PDF 渲染**: pdfium-render v0.9.1（PDF 页面转图片渲染；PDFium 库预置于 assets/，构建时若缺失自动下载）
+- **文档转换**: LibreOffice（启动时检测，用于旧版 .doc/.ppt 和 PPTX 幻灯片渲染——PPTX 现在在 LibreOffice 不可用时具有纯 Rust 原生回退方案）
 - **系统指标**: sysinfo（CPU、内存、进程监控）
 
 ---
